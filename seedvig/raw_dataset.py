@@ -10,6 +10,7 @@ from torch.utils.data import Dataset
 
 WINDOW_SECONDS = 8
 LABEL_MODE_CHOICES = ("three_class", "binary")
+DEFAULT_CACHE_DTYPE = "float32"
 
 
 def perclos_to_class(perclos, label_mode="three_class"):
@@ -98,6 +99,19 @@ def _load_raw_eeg(path):
     return data, sample_rate
 
 
+def window_and_normalize_eeg(eeg, window_count, samples_per_window):
+    expected_samples = int(window_count * samples_per_window)
+    if eeg.shape[0] != expected_samples:
+        raise ValueError(
+            f"EEG samples {eeg.shape[0]} do not match {window_count} windows "
+            f"with {samples_per_window} samples per window"
+        )
+    windows = eeg.reshape(window_count, samples_per_window, -1).transpose(0, 2, 1)
+    mean = windows.mean(axis=-1, keepdims=True)
+    std = windows.std(axis=-1, keepdims=True)
+    return ((windows - mean) / (std + 1e-6)).astype(np.float32, copy=False)
+
+
 def _resolve_validation_fold(fold, validation_fold):
     if validation_fold is None:
         validation_fold = (fold + 1) % 5
@@ -136,13 +150,14 @@ class RawSeedVIGSequenceDataset(Dataset):
     def __init__(
         self,
         root_path,
+        cache_dir=None,
         sequence_length=8,
         split="train",
         split_strategy="within_experiment_5fold",
         fold=0,
         validation_fold=None,
         label_mode="three_class",
-        cache_size=2,
+        cache_size=32,
     ):
         if sequence_length < 1:
             raise ValueError("sequence_length must be positive")
@@ -150,6 +165,7 @@ class RawSeedVIGSequenceDataset(Dataset):
             raise ValueError("fold must be in [0, 4]")
 
         self.root_path = Path(root_path)
+        self.cache_dir = None if cache_dir is None else Path(cache_dir)
         self.sequence_length = int(sequence_length)
         self.split = split
         self.split_strategy = split_strategy
@@ -198,19 +214,29 @@ class RawSeedVIGSequenceDataset(Dataset):
             return self._cache[experiment_index]
 
         pair = self.file_pairs[experiment_index]
-        eeg, sample_rate = _load_raw_eeg(pair.raw_path)
         perclos = np.clip(self.perclos_by_experiment[experiment_index].astype(np.float32), 0.0, 1.0)
+        if self.cache_dir is not None:
+            cache_path = self.cache_dir / f"{pair.experiment_id}.eeg.npy"
+            if cache_path.exists():
+                eeg_windows = np.load(cache_path)
+                if eeg_windows.shape[0] != perclos.shape[0]:
+                    raise ValueError(
+                        f"{pair.experiment_id}: cached windows {eeg_windows.shape[0]} "
+                        f"do not match PERCLOS windows {perclos.shape[0]}"
+                    )
+                value = {
+                    "eeg_windows": eeg_windows,
+                    "perclos": perclos,
+                }
+                self._cache[experiment_index] = value
+                while len(self._cache) > self.cache_size:
+                    self._cache.popitem(last=False)
+                return value
+
+        eeg, sample_rate = _load_raw_eeg(pair.raw_path)
         samples_per_window = int(sample_rate * WINDOW_SECONDS)
-        expected_samples = int(perclos.shape[0] * samples_per_window)
-        if eeg.shape[0] != expected_samples:
-            raise ValueError(
-                f"{pair.experiment_id}: EEG samples {eeg.shape[0]} do not match "
-                f"{perclos.shape[0]} PERCLOS windows at {sample_rate} Hz"
-            )
         value = {
-            "eeg": eeg,
-            "sample_rate": sample_rate,
-            "samples_per_window": samples_per_window,
+            "eeg_windows": window_and_normalize_eeg(eeg, int(perclos.shape[0]), samples_per_window),
             "perclos": perclos,
         }
         self._cache[experiment_index] = value
@@ -222,15 +248,7 @@ class RawSeedVIGSequenceDataset(Dataset):
         item = self.sequence_index[index]
         pair = self.file_pairs[item.experiment_index]
         experiment = self._experiment(item.experiment_index)
-        samples_per_window = experiment["samples_per_window"]
-        start_sample = item.start * samples_per_window
-        stop_sample = (item.start + self.sequence_length) * samples_per_window
-        channels_last = experiment["eeg"][start_sample:stop_sample]
-        eeg = channels_last.reshape(self.sequence_length, samples_per_window, -1).transpose(0, 2, 1)
-        eeg = eeg.astype(np.float32, copy=False)
-        mean = eeg.mean(axis=-1, keepdims=True)
-        std = eeg.std(axis=-1, keepdims=True)
-        eeg = (eeg - mean) / (std + 1e-6)
+        eeg = np.asarray(experiment["eeg_windows"][item.start : item.start + self.sequence_length], dtype=np.float32)
 
         perclos_sequence = experiment["perclos"][item.start : item.start + self.sequence_length]
         perclos = torch.tensor(float(perclos_sequence[-1]), dtype=torch.float32)

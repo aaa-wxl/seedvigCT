@@ -51,6 +51,30 @@ class RawConformerPipelineTests(unittest.TestCase):
         self.assertAlmostEqual(sample["targets"]["perclos"].item(), 0.18888889, places=6)
         self.assertEqual(sample["experiment_id"], "1_20200101_noon")
 
+    def test_raw_cache_builder_writes_windowed_eeg_used_by_dataset(self):
+        from experiments.cache_raw_eeg import build_cache
+        from seedvig.raw_dataset import RawSeedVIGSequenceDataset
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            cache_root = root / "cache"
+            _write_seed_vig_fixture(data_root)
+
+            written = build_cache(data_root, cache_root)
+            uncached = RawSeedVIGSequenceDataset(data_root, sequence_length=2, split="all")
+            cached = RawSeedVIGSequenceDataset(
+                data_root,
+                sequence_length=2,
+                split="all",
+                cache_dir=cache_root,
+            )
+
+            self.assertEqual(len(written), 1)
+            self.assertTrue((cache_root / "1_20200101_noon.eeg.npy").exists())
+            self.assertTrue((cache_root / "manifest.json").exists())
+            self.assertTrue(torch.allclose(cached[0]["eeg"], uncached[0]["eeg"]))
+
     def test_raw_eeg_conformer_outputs_class_and_perclos_predictions(self):
         from seedvig.models import RawEEGConformer
 
@@ -97,6 +121,7 @@ class RawConformerPipelineTests(unittest.TestCase):
 
             metrics = run_training(
                 data_root=data_root,
+                cache_dir=tmp_path / "cache",
                 run_dir=run_dir,
                 epochs=1,
                 sequence_length=2,

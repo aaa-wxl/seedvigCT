@@ -93,6 +93,7 @@ def _write_epoch_log(run_dir, row, write_header):
 
 def run_training(
     data_root=DEFAULT_DATA_ROOT,
+    cache_dir=None,
     run_dir="runs/raw_eeg_conformer",
     epochs=20,
     sequence_length=8,
@@ -120,6 +121,7 @@ def run_training(
 
     dataset_args = {
         "root_path": data_root,
+        "cache_dir": cache_dir,
         "sequence_length": sequence_length,
         "split_strategy": split_strategy,
         "fold": fold,
@@ -219,6 +221,7 @@ def run_training(
 def main():
     parser = argparse.ArgumentParser(description="Train raw EEG-only Conformer on SEED-VIG.")
     parser.add_argument("--data-root", default=str(DEFAULT_DATA_ROOT))
+    parser.add_argument("--cache-dir", default=None)
     parser.add_argument("--run-dir", default="runs/raw_eeg_conformer")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--sequence-length", type=int, default=8)
@@ -244,6 +247,7 @@ def main():
 
     metrics = run_training(
         data_root=args.data_root,
+        cache_dir=args.cache_dir,
         run_dir=args.run_dir,
         epochs=args.epochs,
         sequence_length=args.sequence_length,

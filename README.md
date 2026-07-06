@@ -28,3 +28,13 @@ Smoke test:
 ```powershell
 & 'C:\Users\ASUS\miniconda3\envs\torch\python.exe' -m unittest tests.test_raw_conformer_pipeline -v
 ```
+
+Build raw EEG cache before full runs:
+
+```powershell
+& 'C:\Users\ASUS\miniconda3\envs\torch\python.exe' -m experiments.cache_raw_eeg `
+  --data-root 'D:\eeg-eog\data\SEED-VIG' `
+  --cache-dir cache\seedvig_raw_eeg
+```
+
+Then pass `--cache-dir cache\seedvig_raw_eeg` to training.
