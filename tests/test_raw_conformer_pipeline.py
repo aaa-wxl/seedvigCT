@@ -1,0 +1,120 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+import numpy as np
+import torch
+from scipy.io import savemat
+
+
+def _write_seed_vig_fixture(root, name="1_20200101_noon.mat", windows=10):
+    raw_dir = root / "Raw_Data"
+    label_dir = root / "perclos_labels"
+    raw_dir.mkdir(parents=True)
+    label_dir.mkdir(parents=True)
+
+    eeg_sample_rate = 200
+    samples_per_window = eeg_sample_rate * 8
+    eeg = np.arange(windows * samples_per_window * 17, dtype=np.float32).reshape(
+        windows * samples_per_window,
+        17,
+    )
+    perclos = np.linspace(0.1, 0.9, windows, dtype=np.float32).reshape(-1, 1)
+    savemat(
+        raw_dir / name,
+        {
+            "EEG": {
+                "data": eeg,
+                "sample_rate": np.array([[eeg_sample_rate]], dtype=np.uint16),
+                "chn": np.array([["C"] * 17], dtype=object),
+                "node_number": np.array([[17]], dtype=np.uint8),
+            }
+        },
+    )
+    savemat(label_dir / name, {"perclos": perclos})
+
+
+class RawConformerPipelineTests(unittest.TestCase):
+    def test_raw_dataset_returns_session_safe_eeg_sequences(self):
+        from seedvig.raw_dataset import RawSeedVIGSequenceDataset
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_seed_vig_fixture(root)
+
+            dataset = RawSeedVIGSequenceDataset(root, sequence_length=2, split="all")
+            sample = dataset[0]
+
+        self.assertEqual(len(dataset), 5)
+        self.assertEqual(tuple(sample["eeg"].shape), (2, 17, 1600))
+        self.assertEqual(sample["targets"]["class"].item(), 0)
+        self.assertAlmostEqual(sample["targets"]["perclos"].item(), 0.18888889, places=6)
+        self.assertEqual(sample["experiment_id"], "1_20200101_noon")
+
+    def test_raw_eeg_conformer_outputs_class_and_perclos_predictions(self):
+        from seedvig.models import RawEEGConformer
+
+        model = RawEEGConformer(
+            eeg_channels=17,
+            embedding_dim=32,
+            attention_heads=4,
+            window_transformer_layers=1,
+            temporal_layers=1,
+            num_classes=3,
+        )
+        outputs = model(torch.randn(2, 3, 17, 1600))
+
+        self.assertEqual(tuple(outputs["class_logits"].shape), (2, 3))
+        self.assertEqual(tuple(outputs["perclos"].shape), (2, 1))
+        self.assertTrue(torch.all(outputs["perclos"] >= 0.0))
+        self.assertTrue(torch.all(outputs["perclos"] <= 1.0))
+
+    def test_reference_comparison_reports_deltas_against_existing_experiments(self):
+        from seedvig.reference_results import compare_to_references
+
+        comparisons = compare_to_references(
+            {
+                "test_accuracy": 0.75,
+                "test_rmse": 0.14,
+                "test_pearson": 0.86,
+            },
+            split_strategy="within_experiment_5fold",
+        )
+
+        concat = next(item for item in comparisons if item["reference"] == "concat_fusion")
+        self.assertAlmostEqual(concat["delta_accuracy"], -0.0195, places=4)
+        self.assertAlmostEqual(concat["delta_rmse"], 0.0018, places=4)
+        self.assertAlmostEqual(concat["delta_pearson"], 0.0103, places=4)
+
+    def test_training_smoke_writes_metrics_with_reference_comparison(self):
+        from experiments.train_raw_conformer import run_training
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            data_root = tmp_path / "data"
+            run_dir = tmp_path / "run"
+            _write_seed_vig_fixture(data_root)
+
+            metrics = run_training(
+                data_root=data_root,
+                run_dir=run_dir,
+                epochs=1,
+                sequence_length=2,
+                batch_size=1,
+                embedding_dim=16,
+                attention_heads=4,
+                window_transformer_layers=0,
+                temporal_layers=0,
+                max_batches=1,
+                eval_max_batches=1,
+                device="cpu",
+            )
+
+            self.assertTrue((run_dir / "final_metrics.json").exists())
+            self.assertIn("test_accuracy", metrics)
+            self.assertIn("reference_comparisons", metrics)
+            self.assertEqual(metrics["reference_comparisons"][0]["reference"], "concat_fusion")
+
+
+if __name__ == "__main__":
+    unittest.main()
