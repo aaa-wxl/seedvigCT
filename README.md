@@ -38,3 +38,18 @@ Build raw EEG cache before full runs:
 ```
 
 Then pass `--cache-dir cache\seedvig_raw_eeg` to training.
+
+EEG+EOG cross-attention run:
+
+```powershell
+& 'C:\Users\ASUS\miniconda3\envs\torch\python.exe' -m experiments.train_raw_conformer `
+  --data-root 'D:\eeg-eog\data\SEED-VIG' `
+  --cache-dir cache\seedvig_raw_eeg `
+  --split-strategy within_experiment_5fold `
+  --fold 0 `
+  --run-dir runs\raw_eeg_eog_cross_f0 `
+  --epochs 20 `
+  --batch-size 4 `
+  --device cuda `
+  --use-eog-cross-attention
+```

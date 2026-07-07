@@ -29,6 +29,18 @@ def _write_seed_vig_fixture(root, name="1_20200101_noon.mat", windows=10):
                 "chn": np.array([["C"] * 17], dtype=object),
                 "node_number": np.array([[17]], dtype=np.uint8),
             }
+            ,
+            "EOG": {
+                "eog": np.arange(windows * 1000 * 7, dtype=np.float32).reshape(windows * 1000, 7),
+                "eog_h": np.zeros((windows * 1000, 1), dtype=np.float32),
+                "eog_v": np.zeros((windows * 1000, 1), dtype=np.float32),
+                "eog_config": {
+                    "current_sample_rate": np.array([[125]], dtype=np.uint16),
+                    "segment_duration": np.array([[8]], dtype=np.uint8),
+                    "segment_number": np.array([[windows]], dtype=np.uint16),
+                },
+                "eog_number": np.array([[windows * 1000]], dtype=np.int32),
+            },
         },
     )
     savemat(label_dir / name, {"perclos": perclos})
@@ -51,7 +63,7 @@ class RawConformerPipelineTests(unittest.TestCase):
         self.assertAlmostEqual(sample["targets"]["perclos"].item(), 0.18888889, places=6)
         self.assertEqual(sample["experiment_id"], "1_20200101_noon")
 
-    def test_raw_cache_builder_writes_windowed_eeg_used_by_dataset(self):
+    def test_raw_cache_builder_writes_windowed_eeg_and_eog_used_by_dataset(self):
         from experiments.cache_raw_eeg import build_cache
         from seedvig.raw_dataset import RawSeedVIGSequenceDataset
 
@@ -68,12 +80,15 @@ class RawConformerPipelineTests(unittest.TestCase):
                 sequence_length=2,
                 split="all",
                 cache_dir=cache_root,
+                include_eog=True,
             )
 
             self.assertEqual(len(written), 1)
             self.assertTrue((cache_root / "1_20200101_noon.eeg.npy").exists())
+            self.assertTrue((cache_root / "1_20200101_noon.eog.npy").exists())
             self.assertTrue((cache_root / "manifest.json").exists())
             self.assertTrue(torch.allclose(cached[0]["eeg"], uncached[0]["eeg"]))
+            self.assertEqual(tuple(cached[0]["eog"].shape), (2, 7, 1000))
 
     def test_raw_eeg_conformer_outputs_class_and_perclos_predictions(self):
         from seedvig.models import RawEEGConformer
@@ -92,6 +107,25 @@ class RawConformerPipelineTests(unittest.TestCase):
         self.assertEqual(tuple(outputs["perclos"].shape), (2, 1))
         self.assertTrue(torch.all(outputs["perclos"] >= 0.0))
         self.assertTrue(torch.all(outputs["perclos"] <= 1.0))
+
+    def test_raw_eeg_conformer_cross_attends_to_eog(self):
+        from seedvig.models import RawEEGConformer
+
+        model = RawEEGConformer(
+            eeg_channels=17,
+            eog_channels=7,
+            embedding_dim=32,
+            attention_heads=4,
+            window_transformer_layers=0,
+            temporal_layers=1,
+            use_eog_cross_attention=True,
+            num_classes=3,
+        )
+        outputs = model(torch.randn(2, 3, 17, 1600), eog=torch.randn(2, 3, 7, 1000))
+
+        self.assertEqual(tuple(outputs["class_logits"].shape), (2, 3))
+        self.assertEqual(tuple(outputs["perclos"].shape), (2, 1))
+        self.assertEqual(tuple(outputs["eog_attention_weights"].shape[:2]), (2, 3))
 
     def test_reference_comparison_reports_deltas_against_existing_experiments(self):
         from seedvig.reference_results import compare_to_references
@@ -132,6 +166,8 @@ class RawConformerPipelineTests(unittest.TestCase):
                 temporal_layers=0,
                 max_batches=1,
                 eval_max_batches=1,
+                include_eog=True,
+                use_eog_cross_attention=True,
                 device="cpu",
             )
 

@@ -9,8 +9,10 @@ from seedvig.raw_dataset import (
     WINDOW_SECONDS,
     _load_perclos,
     _load_raw_eeg,
+    _load_raw_eog,
     discover_raw_seed_vig_files,
     window_and_normalize_eeg,
+    window_and_normalize_signal,
 )
 
 
@@ -27,12 +29,23 @@ def build_cache(data_root, cache_dir, dtype=DEFAULT_CACHE_DTYPE):
         windows = window_and_normalize_eeg(eeg, int(perclos.shape[0]), samples_per_window)
         cache_path = cache_dir / f"{pair.experiment_id}.eeg.npy"
         np.save(cache_path, windows.astype(dtype, copy=False))
+        eog, eog_sample_rate = _load_raw_eog(pair.raw_path)
+        eog_windows = window_and_normalize_signal(
+            eog,
+            int(perclos.shape[0]),
+            int(eog_sample_rate * WINDOW_SECONDS),
+        )
+        eog_cache_path = cache_dir / f"{pair.experiment_id}.eog.npy"
+        np.save(eog_cache_path, eog_windows.astype(dtype, copy=False))
         written.append(
             {
                 "experiment_id": pair.experiment_id,
                 "path": cache_path.name,
+                "eog_path": eog_cache_path.name,
                 "shape": list(windows.shape),
+                "eog_shape": list(eog_windows.shape),
                 "sample_rate": sample_rate,
+                "eog_sample_rate": eog_sample_rate,
                 "dtype": str(np.dtype(dtype)),
             }
         )

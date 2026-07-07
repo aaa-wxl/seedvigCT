@@ -8,6 +8,7 @@ class RawEEGConformer(nn.Module):
     def __init__(
         self,
         eeg_channels=17,
+        eog_channels=7,
         embedding_dim=64,
         attention_heads=4,
         window_transformer_layers=1,
@@ -15,6 +16,7 @@ class RawEEGConformer(nn.Module):
         num_classes=3,
         dropout=0.1,
         max_sequence_length=32,
+        use_eog_cross_attention=False,
     ):
         super().__init__()
         if embedding_dim % attention_heads != 0:
@@ -23,8 +25,10 @@ class RawEEGConformer(nn.Module):
             raise ValueError("transformer layer counts must be non-negative")
 
         self.eeg_channels = int(eeg_channels)
+        self.eog_channels = int(eog_channels)
         self.embedding_dim = int(embedding_dim)
         self.max_sequence_length = int(max_sequence_length)
+        self.use_eog_cross_attention = bool(use_eog_cross_attention)
         self.patch_encoder = nn.Sequential(
             nn.Conv2d(1, 16, kernel_size=(1, 64), padding=(0, 32), bias=False),
             nn.BatchNorm2d(16),
@@ -39,6 +43,27 @@ class RawEEGConformer(nn.Module):
             nn.AvgPool2d(kernel_size=(1, 8), stride=(1, 8)),
             nn.Dropout(dropout),
         )
+        if self.use_eog_cross_attention:
+            self.eog_patch_encoder = nn.Sequential(
+                nn.Conv2d(1, 16, kernel_size=(1, 32), padding=(0, 16), bias=False),
+                nn.BatchNorm2d(16),
+                nn.GELU(),
+                nn.Conv2d(16, 32, kernel_size=(self.eog_channels, 1), groups=16, bias=False),
+                nn.BatchNorm2d(32),
+                nn.GELU(),
+                nn.Conv2d(32, embedding_dim, kernel_size=1, bias=False),
+                nn.BatchNorm2d(embedding_dim),
+                nn.GELU(),
+                nn.AvgPool2d(kernel_size=(1, 8), stride=(1, 8)),
+                nn.Dropout(dropout),
+            )
+            self.eog_cross_attention = nn.MultiheadAttention(
+                embedding_dim,
+                attention_heads,
+                dropout=dropout,
+                batch_first=True,
+            )
+            self.eog_fusion_norm = nn.LayerNorm(embedding_dim)
 
         if window_transformer_layers:
             layer = nn.TransformerEncoderLayer(
@@ -70,7 +95,15 @@ class RawEEGConformer(nn.Module):
         self.classifier = nn.Linear(embedding_dim, num_classes)
         self.perclos_head = nn.Sequential(nn.Linear(embedding_dim, 1), nn.Sigmoid())
 
-    def forward(self, eeg):
+    def _encode_eog_tokens(self, eog, batch_size, sequence_length):
+        if eog.ndim != 4:
+            raise ValueError("eog must have shape [batch, time, channels, samples]")
+        if eog.shape[2] != self.eog_channels:
+            raise ValueError(f"expected {self.eog_channels} EOG channels, got {eog.shape[2]}")
+        eog_windows = eog.reshape(batch_size * sequence_length, 1, self.eog_channels, eog.shape[-1])
+        return self.eog_patch_encoder(eog_windows).squeeze(2).transpose(1, 2)
+
+    def forward(self, eeg, eog=None):
         if eeg.ndim != 4:
             raise ValueError("eeg must have shape [batch, time, channels, samples]")
         if eeg.shape[2] != self.eeg_channels:
@@ -83,11 +116,23 @@ class RawEEGConformer(nn.Module):
         tokens = self.patch_encoder(windows).squeeze(2).transpose(1, 2)
         tokens = self.window_transformer(tokens)
         window_embeddings = tokens.mean(dim=1).reshape(batch_size, sequence_length, self.embedding_dim)
+        outputs = {}
+        if self.use_eog_cross_attention and eog is not None:
+            eog_tokens = self._encode_eog_tokens(eog, batch_size, sequence_length)
+            query = window_embeddings.reshape(batch_size * sequence_length, 1, self.embedding_dim)
+            attended, weights = self.eog_cross_attention(query, eog_tokens, eog_tokens)
+            window_embeddings = self.eog_fusion_norm(
+                window_embeddings + attended.reshape(batch_size, sequence_length, self.embedding_dim)
+            )
+            outputs["eog_attention_weights"] = weights.reshape(batch_size, sequence_length, *weights.shape[1:])
 
         sequence = window_embeddings + self.position_embedding[:, :sequence_length]
         sequence = self.temporal_transformer(sequence)
         pooled = sequence[:, -1]
-        return {
-            "class_logits": self.classifier(pooled),
-            "perclos": self.perclos_head(pooled),
-        }
+        outputs.update(
+            {
+                "class_logits": self.classifier(pooled),
+                "perclos": self.perclos_head(pooled),
+            }
+        )
+        return outputs

@@ -45,7 +45,7 @@ def _evaluate(model, loader, device, num_classes, max_batches=None, prefix="test
     with torch.no_grad():
         for batch in loader:
             batch = _move_to_device(batch, device)
-            outputs = model(batch["eeg"])
+            outputs = model(batch["eeg"], eog=batch.get("eog"))
             loss, components = _loss(outputs, batch["targets"])
             totals["loss"] += float(loss.detach().cpu())
             totals["classification"] += float(components["classification"].cpu())
@@ -111,6 +111,8 @@ def run_training(
     eval_max_batches=None,
     seed=0,
     device="cpu",
+    include_eog=False,
+    use_eog_cross_attention=False,
 ):
     torch.manual_seed(seed)
     data_root = Path(data_root)
@@ -122,6 +124,7 @@ def run_training(
     dataset_args = {
         "root_path": data_root,
         "cache_dir": cache_dir,
+        "include_eog": include_eog or use_eog_cross_attention,
         "sequence_length": sequence_length,
         "split_strategy": split_strategy,
         "fold": fold,
@@ -143,6 +146,7 @@ def run_training(
         temporal_layers=temporal_layers,
         num_classes=num_classes,
         max_sequence_length=max(sequence_length, 32),
+        use_eog_cross_attention=use_eog_cross_attention,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     best_val_loss = None
@@ -157,7 +161,7 @@ def run_training(
         steps = 0
         for batch in train_loader:
             batch = _move_to_device(batch, device)
-            outputs = model(batch["eeg"])
+            outputs = model(batch["eeg"], eog=batch.get("eog"))
             loss, components = _loss(outputs, batch["targets"])
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -243,6 +247,8 @@ def main():
     parser.add_argument("--eval-max-batches", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--include-eog", action="store_true")
+    parser.add_argument("--use-eog-cross-attention", action="store_true")
     args = parser.parse_args()
 
     metrics = run_training(
@@ -265,6 +271,8 @@ def main():
         eval_max_batches=args.eval_max_batches,
         seed=args.seed,
         device=args.device,
+        include_eog=args.include_eog,
+        use_eog_cross_attention=args.use_eog_cross_attention,
     )
     for key, value in metrics.items():
         if isinstance(value, (int, float, bool, str)):

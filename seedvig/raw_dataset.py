@@ -99,17 +99,41 @@ def _load_raw_eeg(path):
     return data, sample_rate
 
 
-def window_and_normalize_eeg(eeg, window_count, samples_per_window):
+def _sample_rate_from_eog_config(eog_struct):
+    config = _struct_field(eog_struct, "eog_config")
+    try:
+        return int(np.asarray(config[0, 0]["current_sample_rate"]).squeeze())
+    except (IndexError, ValueError, TypeError):
+        return int(np.asarray(config["current_sample_rate"]).squeeze())
+
+
+def _load_raw_eog(path):
+    mat = loadmat(path)
+    if "EOG" not in mat:
+        raise KeyError(f"{path} does not contain `EOG`")
+    eog_struct = mat["EOG"]
+    data = _struct_field(eog_struct, "eog").astype(np.float32, copy=False)
+    sample_rate = _sample_rate_from_eog_config(eog_struct)
+    if data.ndim != 2:
+        raise ValueError(f"{path}: EOG.eog must have shape [samples, channels], got {data.shape}")
+    return data, sample_rate
+
+
+def window_and_normalize_signal(signal, window_count, samples_per_window):
     expected_samples = int(window_count * samples_per_window)
-    if eeg.shape[0] != expected_samples:
+    if signal.shape[0] != expected_samples:
         raise ValueError(
-            f"EEG samples {eeg.shape[0]} do not match {window_count} windows "
+            f"signal samples {signal.shape[0]} do not match {window_count} windows "
             f"with {samples_per_window} samples per window"
         )
-    windows = eeg.reshape(window_count, samples_per_window, -1).transpose(0, 2, 1)
+    windows = signal.reshape(window_count, samples_per_window, -1).transpose(0, 2, 1)
     mean = windows.mean(axis=-1, keepdims=True)
     std = windows.std(axis=-1, keepdims=True)
     return ((windows - mean) / (std + 1e-6)).astype(np.float32, copy=False)
+
+
+def window_and_normalize_eeg(eeg, window_count, samples_per_window):
+    return window_and_normalize_signal(eeg, window_count, samples_per_window)
 
 
 def _resolve_validation_fold(fold, validation_fold):
@@ -151,6 +175,7 @@ class RawSeedVIGSequenceDataset(Dataset):
         self,
         root_path,
         cache_dir=None,
+        include_eog=False,
         sequence_length=8,
         split="train",
         split_strategy="within_experiment_5fold",
@@ -166,6 +191,7 @@ class RawSeedVIGSequenceDataset(Dataset):
 
         self.root_path = Path(root_path)
         self.cache_dir = None if cache_dir is None else Path(cache_dir)
+        self.include_eog = bool(include_eog)
         self.sequence_length = int(sequence_length)
         self.split = split
         self.split_strategy = split_strategy
@@ -224,10 +250,16 @@ class RawSeedVIGSequenceDataset(Dataset):
                         f"{pair.experiment_id}: cached windows {eeg_windows.shape[0]} "
                         f"do not match PERCLOS windows {perclos.shape[0]}"
                     )
-                value = {
-                    "eeg_windows": eeg_windows,
-                    "perclos": perclos,
-                }
+                value = {"eeg_windows": eeg_windows, "perclos": perclos}
+                eog_cache_path = self.cache_dir / f"{pair.experiment_id}.eog.npy"
+                if self.include_eog and eog_cache_path.exists():
+                    eog_windows = np.load(eog_cache_path)
+                    if eog_windows.shape[0] != perclos.shape[0]:
+                        raise ValueError(
+                            f"{pair.experiment_id}: cached EOG windows {eog_windows.shape[0]} "
+                            f"do not match PERCLOS windows {perclos.shape[0]}"
+                        )
+                    value["eog_windows"] = eog_windows
                 self._cache[experiment_index] = value
                 while len(self._cache) > self.cache_size:
                     self._cache.popitem(last=False)
@@ -239,6 +271,13 @@ class RawSeedVIGSequenceDataset(Dataset):
             "eeg_windows": window_and_normalize_eeg(eeg, int(perclos.shape[0]), samples_per_window),
             "perclos": perclos,
         }
+        if self.include_eog:
+            eog, eog_sample_rate = _load_raw_eog(pair.raw_path)
+            value["eog_windows"] = window_and_normalize_signal(
+                eog,
+                int(perclos.shape[0]),
+                int(eog_sample_rate * WINDOW_SECONDS),
+            )
         self._cache[experiment_index] = value
         while len(self._cache) > self.cache_size:
             self._cache.popitem(last=False)
@@ -260,6 +299,18 @@ class RawSeedVIGSequenceDataset(Dataset):
             "window_index": torch.tensor(item.start, dtype=torch.long),
             "experiment_id": pair.experiment_id,
             "eeg": torch.from_numpy(eeg.copy()).float(),
+            **(
+                {
+                    "eog": torch.from_numpy(
+                        np.asarray(
+                            experiment["eog_windows"][item.start : item.start + self.sequence_length],
+                            dtype=np.float32,
+                        ).copy()
+                    ).float()
+                }
+                if self.include_eog and "eog_windows" in experiment
+                else {}
+            ),
             "targets": {
                 "perclos": perclos,
                 "perclos_sequence": torch.from_numpy(perclos_sequence.copy()).float(),
