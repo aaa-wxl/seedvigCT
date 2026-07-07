@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -175,6 +176,54 @@ class RawConformerPipelineTests(unittest.TestCase):
             self.assertIn("test_accuracy", metrics)
             self.assertIn("reference_comparisons", metrics)
             self.assertEqual(metrics["reference_comparisons"][0]["reference"], "concat_fusion")
+
+    def test_auto_raw_experiment_builds_group_subject_command_and_summary(self):
+        from argparse import Namespace
+
+        from experiments.auto_raw_experiments import build_command, summarize_folds
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            args = Namespace(
+                python="python",
+                data_root=tmp_path / "data",
+                cache_dir=tmp_path / "cache",
+                split_strategy="group_subject",
+                run_root=tmp_path / "runs",
+                prefix="raw_eeg_eog_cross_group_subject_f",
+                epochs=20,
+                batch_size=4,
+                device="cuda",
+            )
+
+            command = build_command(args, fold=2)
+            self.assertIn("--split-strategy", command)
+            self.assertIn("group_subject", command)
+            self.assertIn("--use-eog-cross-attention", command)
+            self.assertIn(str(tmp_path / "runs" / "raw_eeg_eog_cross_group_subject_f2"), command)
+
+            for fold, accuracy in enumerate((0.5, 0.6)):
+                run_dir = args.run_root / f"{args.prefix}{fold}"
+                run_dir.mkdir(parents=True)
+                (run_dir / "final_metrics.json").write_text(
+                    json.dumps(
+                        {
+                            "test_accuracy": accuracy,
+                            "test_macro_f1": accuracy - 0.1,
+                            "test_balanced_accuracy": accuracy,
+                            "test_mae": 0.2,
+                            "test_rmse": 0.25,
+                            "test_pearson": 0.6,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+            summary = summarize_folds(args.run_root, args.prefix, "group_subject", tmp_path / "state", folds=(0, 1))
+
+            self.assertEqual(summary["fold_count"], 2)
+            self.assertAlmostEqual(summary["metrics"]["test_accuracy"]["mean"], 0.55)
+            self.assertTrue((tmp_path / "state" / "summary.md").exists())
 
 
 if __name__ == "__main__":

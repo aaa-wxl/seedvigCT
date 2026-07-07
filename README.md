@@ -53,3 +53,9 @@ EEG+EOG cross-attention run:
   --device cuda `
   --use-eog-cross-attention
 ```
+
+Auto-run and monitor the group-subject EEG+EOG queue:
+
+```powershell
+& 'C:\Users\ASUS\miniconda3\envs\torch\python.exe' -m experiments.auto_raw_experiments
+```
