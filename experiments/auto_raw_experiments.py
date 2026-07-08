@@ -42,7 +42,7 @@ def _last_epoch(run_dir):
 
 
 def build_command(args, fold):
-    return [
+    command = [
         args.python,
         "-m",
         "experiments.train_raw_conformer",
@@ -56,6 +56,8 @@ def build_command(args, fold):
         str(fold),
         "--label-mode",
         args.label_mode,
+        "--input-mode",
+        args.input_mode,
         "--run-dir",
         str(args.run_root / f"{args.prefix}{fold}"),
         "--epochs",
@@ -66,8 +68,16 @@ def build_command(args, fold):
         str(args.seed),
         "--device",
         args.device,
-        "--use-eog-cross-attention",
     ]
+    if args.use_eog_cross_attention:
+        command.append("--use-eog-cross-attention")
+    if args.use_temporal_delta:
+        command.append("--use-temporal-delta")
+    if args.use_eog_gate:
+        command.append("--use-eog-gate")
+    if args.eog_dropout:
+        command.extend(["--eog-dropout", str(args.eog_dropout)])
+    return command
 
 
 def summarize_folds(run_root, prefix, split_strategy, state_dir, folds=(0, 1, 2, 3, 4)):
@@ -130,7 +140,12 @@ def run_queue(args):
             "prefix": args.prefix,
             "split_strategy": args.split_strategy,
             "label_mode": args.label_mode,
+            "input_mode": args.input_mode,
             "seed": args.seed,
+            "use_eog_cross_attention": args.use_eog_cross_attention,
+            "use_temporal_delta": args.use_temporal_delta,
+            "use_eog_gate": args.use_eog_gate,
+            "eog_dropout": args.eog_dropout,
         },
     )
     for fold in args.folds:
@@ -198,12 +213,17 @@ def main():
     parser.add_argument("--prefix", default="raw_eeg_eog_cross_group_subject_f")
     parser.add_argument("--split-strategy", choices=("group_subject", "within_experiment_5fold"), default="group_subject")
     parser.add_argument("--label-mode", choices=("three_class", "binary"), default="three_class")
+    parser.add_argument("--input-mode", choices=("eeg", "eog", "eeg_eog"), default="eeg_eog")
     parser.add_argument("--folds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--poll-seconds", type=int, default=30)
+    parser.add_argument("--use-eog-cross-attention", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--use-temporal-delta", action="store_true")
+    parser.add_argument("--use-eog-gate", action="store_true")
+    parser.add_argument("--eog-dropout", type=float, default=0.0)
     raise SystemExit(run_queue(parser.parse_args()))
 
 

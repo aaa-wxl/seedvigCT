@@ -54,7 +54,44 @@ EEG+EOG cross-attention run:
   --use-eog-cross-attention
 ```
 
-Auto-run and monitor the group-subject EEG+EOG queue:
+Useful raw binary group-subject ablations:
+
+```powershell
+# raw EEG-only
+& 'C:\Users\ASUS\miniconda3\envs\torch\python.exe' -m experiments.auto_raw_experiments `
+  --input-mode eeg `
+  --label-mode binary `
+  --prefix raw_eeg_only_binary_group_subject_f `
+  --state-dir runs\auto_raw_eeg_only_binary_group_subject `
+  --no-use-eog-cross-attention
+
+# raw EOG-only
+& 'C:\Users\ASUS\miniconda3\envs\torch\python.exe' -m experiments.auto_raw_experiments `
+  --input-mode eog `
+  --label-mode binary `
+  --prefix raw_eog_only_binary_group_subject_f `
+  --state-dir runs\auto_raw_eog_only_binary_group_subject `
+  --no-use-eog-cross-attention
+
+# raw EEG+EOG cross-attention with temporal delta, EOG gate, and modality dropout
+& 'C:\Users\ASUS\miniconda3\envs\torch\python.exe' -m experiments.auto_raw_experiments `
+  --input-mode eeg_eog `
+  --label-mode binary `
+  --prefix raw_eeg_eog_delta_gate_binary_group_subject_f `
+  --state-dir runs\auto_raw_eeg_eog_delta_gate_binary_group_subject `
+  --use-eog-cross-attention `
+  --use-temporal-delta `
+  --use-eog-gate `
+  --eog-dropout 0.25
+```
+
+Auto-run the full raw binary ablation plan after the GPU becomes available:
+
+```powershell
+& 'C:\Users\ASUS\miniconda3\envs\torch\python.exe' -m experiments.run_raw_ablation_plan
+```
+
+Auto-run and monitor the original group-subject EEG+EOG queue:
 
 ```powershell
 & 'C:\Users\ASUS\miniconda3\envs\torch\python.exe' -m experiments.auto_raw_experiments

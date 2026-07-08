@@ -128,6 +128,29 @@ class RawConformerPipelineTests(unittest.TestCase):
         self.assertEqual(tuple(outputs["perclos"].shape), (2, 1))
         self.assertEqual(tuple(outputs["eog_attention_weights"].shape[:2]), (2, 3))
 
+    def test_raw_eeg_conformer_supports_temporal_delta_and_eog_gate(self):
+        from seedvig.models import RawEEGConformer
+
+        model = RawEEGConformer(
+            eeg_channels=17,
+            eog_channels=7,
+            embedding_dim=32,
+            attention_heads=4,
+            window_transformer_layers=0,
+            temporal_layers=0,
+            use_eog_cross_attention=True,
+            use_temporal_delta=True,
+            use_eog_gate=True,
+            eog_dropout=1.0,
+            num_classes=2,
+        )
+        model.train()
+        outputs = model(torch.randn(2, 3, 17, 1600), eog=torch.randn(2, 3, 7, 1000))
+
+        self.assertEqual(tuple(outputs["class_logits"].shape), (2, 2))
+        self.assertEqual(tuple(outputs["perclos"].shape), (2, 1))
+        self.assertEqual(tuple(outputs["eog_gate"].shape), (2, 3, 1))
+
     def test_reference_comparison_reports_deltas_against_existing_experiments(self):
         from seedvig.reference_results import compare_to_references
 
@@ -177,6 +200,36 @@ class RawConformerPipelineTests(unittest.TestCase):
             self.assertIn("reference_comparisons", metrics)
             self.assertEqual(metrics["reference_comparisons"][0]["reference"], "concat_fusion")
 
+    def test_training_smoke_supports_raw_eog_only_input_mode(self):
+        from experiments.train_raw_conformer import run_training
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            data_root = tmp_path / "data"
+            run_dir = tmp_path / "run"
+            _write_seed_vig_fixture(data_root)
+
+            metrics = run_training(
+                data_root=data_root,
+                cache_dir=tmp_path / "cache",
+                run_dir=run_dir,
+                epochs=1,
+                sequence_length=2,
+                batch_size=1,
+                embedding_dim=16,
+                attention_heads=4,
+                window_transformer_layers=0,
+                temporal_layers=0,
+                max_batches=1,
+                eval_max_batches=1,
+                input_mode="eog",
+                label_mode="binary",
+                device="cpu",
+            )
+
+            self.assertTrue((run_dir / "final_metrics.json").exists())
+            self.assertEqual(metrics["input_mode"], "eog")
+
     def test_auto_raw_experiment_builds_group_subject_command_and_summary(self):
         from argparse import Namespace
 
@@ -190,12 +243,17 @@ class RawConformerPipelineTests(unittest.TestCase):
                 cache_dir=tmp_path / "cache",
                 split_strategy="group_subject",
                 label_mode="binary",
+                input_mode="eeg",
                 run_root=tmp_path / "runs",
                 prefix="raw_eeg_eog_cross_group_subject_f",
                 epochs=20,
                 batch_size=4,
                 seed=1,
                 device="cuda",
+                use_eog_cross_attention=False,
+                use_temporal_delta=True,
+                use_eog_gate=False,
+                eog_dropout=0.0,
             )
 
             command = build_command(args, fold=2)
@@ -203,9 +261,12 @@ class RawConformerPipelineTests(unittest.TestCase):
             self.assertIn("group_subject", command)
             self.assertIn("--label-mode", command)
             self.assertIn("binary", command)
+            self.assertIn("--input-mode", command)
+            self.assertIn("eeg", command)
             self.assertIn("--seed", command)
             self.assertIn("1", command)
-            self.assertIn("--use-eog-cross-attention", command)
+            self.assertIn("--use-temporal-delta", command)
+            self.assertNotIn("--use-eog-cross-attention", command)
             self.assertIn(str(tmp_path / "runs" / "raw_eeg_eog_cross_group_subject_f2"), command)
 
             for fold, accuracy in enumerate((0.5, 0.6)):
@@ -230,6 +291,43 @@ class RawConformerPipelineTests(unittest.TestCase):
             self.assertEqual(summary["fold_count"], 2)
             self.assertAlmostEqual(summary["metrics"]["test_accuracy"]["mean"], 0.55)
             self.assertTrue((tmp_path / "state" / "summary.md").exists())
+
+    def test_raw_ablation_plan_builds_eeg_eog_and_delta_gate_commands(self):
+        from argparse import Namespace
+
+        from experiments.run_raw_ablation_plan import EXPERIMENTS, build_auto_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            args = Namespace(
+                python="python",
+                cwd=tmp_path,
+                data_root=tmp_path / "data",
+                cache_dir=tmp_path / "cache",
+                run_root=tmp_path / "runs",
+                epochs=20,
+                batch_size=4,
+                seed=0,
+                device="cuda",
+                poll_seconds=30,
+            )
+
+            eeg_command = build_auto_command(args, EXPERIMENTS[0])
+            eog_command = build_auto_command(args, EXPERIMENTS[1])
+            delta_gate_command = build_auto_command(args, EXPERIMENTS[2])
+
+            self.assertIn("raw_eeg_only_binary_group_subject_f", eeg_command)
+            self.assertIn("eeg", eeg_command)
+            self.assertIn("--no-use-eog-cross-attention", eeg_command)
+            self.assertIn("raw_eog_only_binary_group_subject_f", eog_command)
+            self.assertIn("eog", eog_command)
+            self.assertIn("--no-use-eog-cross-attention", eog_command)
+            self.assertIn("raw_eeg_eog_delta_gate_binary_group_subject_f", delta_gate_command)
+            self.assertIn("eeg_eog", delta_gate_command)
+            self.assertIn("--use-eog-cross-attention", delta_gate_command)
+            self.assertIn("--use-temporal-delta", delta_gate_command)
+            self.assertIn("--use-eog-gate", delta_gate_command)
+            self.assertIn("--eog-dropout", delta_gate_command)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,9 @@ class RawEEGConformer(nn.Module):
         dropout=0.1,
         max_sequence_length=32,
         use_eog_cross_attention=False,
+        use_temporal_delta=False,
+        use_eog_gate=False,
+        eog_dropout=0.0,
     ):
         super().__init__()
         if embedding_dim % attention_heads != 0:
@@ -29,6 +32,9 @@ class RawEEGConformer(nn.Module):
         self.embedding_dim = int(embedding_dim)
         self.max_sequence_length = int(max_sequence_length)
         self.use_eog_cross_attention = bool(use_eog_cross_attention)
+        self.use_temporal_delta = bool(use_temporal_delta)
+        self.use_eog_gate = bool(use_eog_gate)
+        self.eog_dropout = float(eog_dropout)
         self.patch_encoder = nn.Sequential(
             nn.Conv2d(1, 16, kernel_size=(1, 64), padding=(0, 32), bias=False),
             nn.BatchNorm2d(16),
@@ -64,6 +70,13 @@ class RawEEGConformer(nn.Module):
                 batch_first=True,
             )
             self.eog_fusion_norm = nn.LayerNorm(embedding_dim)
+            if self.use_eog_gate:
+                self.eog_gate = nn.Sequential(
+                    nn.Linear(embedding_dim * 2, embedding_dim),
+                    nn.GELU(),
+                    nn.Linear(embedding_dim, 1),
+                    nn.Sigmoid(),
+                )
 
         if window_transformer_layers:
             layer = nn.TransformerEncoderLayer(
@@ -92,8 +105,9 @@ class RawEEGConformer(nn.Module):
         else:
             self.temporal_transformer = nn.Identity()
 
-        self.classifier = nn.Linear(embedding_dim, num_classes)
-        self.perclos_head = nn.Sequential(nn.Linear(embedding_dim, 1), nn.Sigmoid())
+        head_dim = embedding_dim * 2 if self.use_temporal_delta else embedding_dim
+        self.classifier = nn.Linear(head_dim, num_classes)
+        self.perclos_head = nn.Sequential(nn.Linear(head_dim, 1), nn.Sigmoid())
 
     def _encode_eog_tokens(self, eog, batch_size, sequence_length):
         if eog.ndim != 4:
@@ -121,14 +135,36 @@ class RawEEGConformer(nn.Module):
             eog_tokens = self._encode_eog_tokens(eog, batch_size, sequence_length)
             query = window_embeddings.reshape(batch_size * sequence_length, 1, self.embedding_dim)
             attended, weights = self.eog_cross_attention(query, eog_tokens, eog_tokens)
+            attended = attended.reshape(batch_size, sequence_length, self.embedding_dim)
+            gate = None
+            if self.use_eog_gate:
+                gate = self.eog_gate(torch.cat([window_embeddings, attended], dim=-1))
+            if self.training and self.eog_dropout > 0:
+                keep_probability = max(0.0, 1.0 - self.eog_dropout)
+                mask = attended.new_empty(batch_size, sequence_length, 1).bernoulli_(keep_probability)
+                if keep_probability > 0:
+                    mask = mask / keep_probability
+                if gate is None:
+                    attended = attended * mask
+                else:
+                    gate = gate * mask
+            if gate is not None:
+                attended = gate * attended
+                outputs["eog_gate"] = gate
             window_embeddings = self.eog_fusion_norm(
-                window_embeddings + attended.reshape(batch_size, sequence_length, self.embedding_dim)
+                window_embeddings + attended
             )
             outputs["eog_attention_weights"] = weights.reshape(batch_size, sequence_length, *weights.shape[1:])
 
         sequence = window_embeddings + self.position_embedding[:, :sequence_length]
         sequence = self.temporal_transformer(sequence)
         pooled = sequence[:, -1]
+        if self.use_temporal_delta:
+            if sequence_length > 1:
+                delta = sequence[:, -1] - sequence[:, -2]
+            else:
+                delta = torch.zeros_like(pooled)
+            pooled = torch.cat([pooled, delta], dim=-1)
         outputs.update(
             {
                 "class_logits": self.classifier(pooled),

@@ -14,6 +14,7 @@ from seedvig.reference_results import compare_to_references
 
 
 DEFAULT_DATA_ROOT = Path(r"D:\eeg-eog\data\SEED-VIG")
+INPUT_MODE_CHOICES = ("eeg", "eog", "eeg_eog")
 
 
 def _move_to_device(value, device):
@@ -33,7 +34,15 @@ def _loss(outputs, targets):
     }
 
 
-def _evaluate(model, loader, device, num_classes, max_batches=None, prefix="test"):
+def _model_inputs(batch, input_mode):
+    if input_mode == "eog":
+        return batch["eog"], None
+    if input_mode == "eeg_eog":
+        return batch["eeg"], batch.get("eog")
+    return batch["eeg"], None
+
+
+def _evaluate(model, loader, device, num_classes, max_batches=None, prefix="test", input_mode="eeg"):
     was_training = model.training
     model.eval()
     totals = {"loss": 0.0, "classification": 0.0, "regression": 0.0}
@@ -45,7 +54,8 @@ def _evaluate(model, loader, device, num_classes, max_batches=None, prefix="test
     with torch.no_grad():
         for batch in loader:
             batch = _move_to_device(batch, device)
-            outputs = model(batch["eeg"], eog=batch.get("eog"))
+            signal, eog = _model_inputs(batch, input_mode)
+            outputs = model(signal, eog=eog)
             loss, components = _loss(outputs, batch["targets"])
             totals["loss"] += float(loss.detach().cpu())
             totals["classification"] += float(components["classification"].cpu())
@@ -113,6 +123,10 @@ def run_training(
     device="cpu",
     include_eog=False,
     use_eog_cross_attention=False,
+    input_mode="eeg",
+    use_temporal_delta=False,
+    use_eog_gate=False,
+    eog_dropout=0.0,
 ):
     torch.manual_seed(seed)
     data_root = Path(data_root)
@@ -120,11 +134,17 @@ def run_training(
     run_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device(device)
     num_classes = label_mode_num_classes(label_mode)
+    if input_mode not in INPUT_MODE_CHOICES:
+        raise ValueError(f"input_mode must be one of: {INPUT_MODE_CHOICES}")
+    if use_eog_cross_attention and input_mode == "eeg":
+        input_mode = "eeg_eog"
+    if input_mode == "eog" and use_eog_cross_attention:
+        raise ValueError("EOG-only mode cannot use EOG cross-attention")
 
     dataset_args = {
         "root_path": data_root,
         "cache_dir": cache_dir,
-        "include_eog": include_eog or use_eog_cross_attention,
+        "include_eog": include_eog or input_mode in ("eog", "eeg_eog") or use_eog_cross_attention,
         "sequence_length": sequence_length,
         "split_strategy": split_strategy,
         "fold": fold,
@@ -139,7 +159,7 @@ def run_training(
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     model = RawEEGConformer(
-        eeg_channels=17,
+        eeg_channels=7 if input_mode == "eog" else 17,
         embedding_dim=embedding_dim,
         attention_heads=attention_heads,
         window_transformer_layers=window_transformer_layers,
@@ -147,6 +167,9 @@ def run_training(
         num_classes=num_classes,
         max_sequence_length=max(sequence_length, 32),
         use_eog_cross_attention=use_eog_cross_attention,
+        use_temporal_delta=use_temporal_delta,
+        use_eog_gate=use_eog_gate,
+        eog_dropout=eog_dropout,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     best_val_loss = None
@@ -161,7 +184,8 @@ def run_training(
         steps = 0
         for batch in train_loader:
             batch = _move_to_device(batch, device)
-            outputs = model(batch["eeg"], eog=batch.get("eog"))
+            signal, eog = _model_inputs(batch, input_mode)
+            outputs = model(signal, eog=eog)
             loss, components = _loss(outputs, batch["targets"])
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -189,8 +213,12 @@ def run_training(
             "embedding_dim": embedding_dim,
             "window_transformer_layers": window_transformer_layers,
             "temporal_layers": temporal_layers,
+            "input_mode": input_mode,
+            "use_temporal_delta": use_temporal_delta,
+            "use_eog_gate": use_eog_gate,
+            "eog_dropout": eog_dropout,
         }
-        row.update(_evaluate(model, val_loader, device, num_classes, eval_max_batches, prefix="val"))
+        row.update(_evaluate(model, val_loader, device, num_classes, eval_max_batches, prefix="val", input_mode=input_mode))
         improved = best_val_loss is None or row["val_loss"] < best_val_loss
         row["improved"] = improved
         if improved:
@@ -204,7 +232,7 @@ def run_training(
 
     checkpoint = torch.load(best_model_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
-    last_metrics.update(_evaluate(model, test_loader, device, num_classes, eval_max_batches, prefix="test"))
+    last_metrics.update(_evaluate(model, test_loader, device, num_classes, eval_max_batches, prefix="test", input_mode=input_mode))
     last_metrics.update(
         {
             "epochs_ran": epochs,
@@ -243,12 +271,16 @@ def main():
     parser.add_argument("--fold", type=int, default=0)
     parser.add_argument("--validation-fold", type=int, default=None)
     parser.add_argument("--label-mode", choices=LABEL_MODE_CHOICES, default="three_class")
+    parser.add_argument("--input-mode", choices=INPUT_MODE_CHOICES, default="eeg")
     parser.add_argument("--max-batches", type=int, default=None)
     parser.add_argument("--eval-max-batches", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--include-eog", action="store_true")
     parser.add_argument("--use-eog-cross-attention", action="store_true")
+    parser.add_argument("--use-temporal-delta", action="store_true")
+    parser.add_argument("--use-eog-gate", action="store_true")
+    parser.add_argument("--eog-dropout", type=float, default=0.0)
     args = parser.parse_args()
 
     metrics = run_training(
@@ -267,12 +299,16 @@ def main():
         fold=args.fold,
         validation_fold=args.validation_fold,
         label_mode=args.label_mode,
+        input_mode=args.input_mode,
         max_batches=args.max_batches,
         eval_max_batches=args.eval_max_batches,
         seed=args.seed,
         device=args.device,
         include_eog=args.include_eog,
         use_eog_cross_attention=args.use_eog_cross_attention,
+        use_temporal_delta=args.use_temporal_delta,
+        use_eog_gate=args.use_eog_gate,
+        eog_dropout=args.eog_dropout,
     )
     for key, value in metrics.items():
         if isinstance(value, (int, float, bool, str)):
