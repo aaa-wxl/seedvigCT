@@ -54,6 +54,8 @@ def build_command(args, fold):
         args.split_strategy,
         "--fold",
         str(fold),
+        "--label-mode",
+        args.label_mode,
         "--run-dir",
         str(args.run_root / f"{args.prefix}{fold}"),
         "--epochs",
@@ -123,7 +125,13 @@ def run_queue(args):
     event_log = args.state_dir / "events.jsonl"
     _append_jsonl(
         event_log,
-        {"event": "queue_start", "prefix": args.prefix, "split_strategy": args.split_strategy, "seed": args.seed},
+        {
+            "event": "queue_start",
+            "prefix": args.prefix,
+            "split_strategy": args.split_strategy,
+            "label_mode": args.label_mode,
+            "seed": args.seed,
+        },
     )
     for fold in args.folds:
         run_dir = args.run_root / f"{args.prefix}{fold}"
@@ -189,6 +197,7 @@ def main():
     parser.add_argument("--state-dir", type=Path, default=Path(r"runs\auto_raw_eeg_eog_cross_group_subject"))
     parser.add_argument("--prefix", default="raw_eeg_eog_cross_group_subject_f")
     parser.add_argument("--split-strategy", choices=("group_subject", "within_experiment_5fold"), default="group_subject")
+    parser.add_argument("--label-mode", choices=("three_class", "binary"), default="three_class")
     parser.add_argument("--folds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=4)

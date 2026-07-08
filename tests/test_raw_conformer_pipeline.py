@@ -189,6 +189,7 @@ class RawConformerPipelineTests(unittest.TestCase):
                 data_root=tmp_path / "data",
                 cache_dir=tmp_path / "cache",
                 split_strategy="group_subject",
+                label_mode="binary",
                 run_root=tmp_path / "runs",
                 prefix="raw_eeg_eog_cross_group_subject_f",
                 epochs=20,
@@ -200,6 +201,8 @@ class RawConformerPipelineTests(unittest.TestCase):
             command = build_command(args, fold=2)
             self.assertIn("--split-strategy", command)
             self.assertIn("group_subject", command)
+            self.assertIn("--label-mode", command)
+            self.assertIn("binary", command)
             self.assertIn("--seed", command)
             self.assertIn("1", command)
             self.assertIn("--use-eog-cross-attention", command)
