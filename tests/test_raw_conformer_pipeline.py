@@ -193,12 +193,15 @@ class RawConformerPipelineTests(unittest.TestCase):
                 prefix="raw_eeg_eog_cross_group_subject_f",
                 epochs=20,
                 batch_size=4,
+                seed=1,
                 device="cuda",
             )
 
             command = build_command(args, fold=2)
             self.assertIn("--split-strategy", command)
             self.assertIn("group_subject", command)
+            self.assertIn("--seed", command)
+            self.assertIn("1", command)
             self.assertIn("--use-eog-cross-attention", command)
             self.assertIn(str(tmp_path / "runs" / "raw_eeg_eog_cross_group_subject_f2"), command)
 

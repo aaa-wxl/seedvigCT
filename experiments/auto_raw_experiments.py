@@ -60,6 +60,8 @@ def build_command(args, fold):
         str(args.epochs),
         "--batch-size",
         str(args.batch_size),
+        "--seed",
+        str(args.seed),
         "--device",
         args.device,
         "--use-eog-cross-attention",
@@ -119,7 +121,10 @@ def summarize_folds(run_root, prefix, split_strategy, state_dir, folds=(0, 1, 2,
 
 def run_queue(args):
     event_log = args.state_dir / "events.jsonl"
-    _append_jsonl(event_log, {"event": "queue_start", "prefix": args.prefix, "split_strategy": args.split_strategy})
+    _append_jsonl(
+        event_log,
+        {"event": "queue_start", "prefix": args.prefix, "split_strategy": args.split_strategy, "seed": args.seed},
+    )
     for fold in args.folds:
         run_dir = args.run_root / f"{args.prefix}{fold}"
         if (run_dir / "final_metrics.json").exists():
@@ -187,6 +192,7 @@ def main():
     parser.add_argument("--folds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--poll-seconds", type=int, default=30)
     raise SystemExit(run_queue(parser.parse_args()))
