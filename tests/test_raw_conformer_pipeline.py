@@ -230,6 +230,70 @@ class RawConformerPipelineTests(unittest.TestCase):
             self.assertTrue((run_dir / "final_metrics.json").exists())
             self.assertEqual(metrics["input_mode"], "eog")
 
+    def test_training_smoke_supports_classification_objective_auto_selection(self):
+        from experiments.train_raw_conformer import run_training
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            data_root = tmp_path / "data"
+            run_dir = tmp_path / "run"
+            _write_seed_vig_fixture(data_root)
+
+            metrics = run_training(
+                data_root=data_root,
+                cache_dir=tmp_path / "cache",
+                run_dir=run_dir,
+                epochs=1,
+                sequence_length=2,
+                batch_size=1,
+                embedding_dim=16,
+                attention_heads=4,
+                window_transformer_layers=0,
+                temporal_layers=0,
+                max_batches=1,
+                eval_max_batches=1,
+                input_mode="eog",
+                label_mode="binary",
+                training_objective="classification",
+                device="cpu",
+            )
+
+            self.assertEqual(metrics["training_objective"], "classification")
+            self.assertEqual(metrics["selection_metric"], "val_balanced_accuracy")
+            self.assertIn("best_selection_score", metrics)
+
+    def test_training_smoke_supports_regression_objective_auto_selection(self):
+        from experiments.train_raw_conformer import run_training
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            data_root = tmp_path / "data"
+            run_dir = tmp_path / "run"
+            _write_seed_vig_fixture(data_root)
+
+            metrics = run_training(
+                data_root=data_root,
+                cache_dir=tmp_path / "cache",
+                run_dir=run_dir,
+                epochs=1,
+                sequence_length=2,
+                batch_size=1,
+                embedding_dim=16,
+                attention_heads=4,
+                window_transformer_layers=0,
+                temporal_layers=0,
+                max_batches=1,
+                eval_max_batches=1,
+                input_mode="eog",
+                label_mode="binary",
+                training_objective="regression",
+                device="cpu",
+            )
+
+            self.assertEqual(metrics["training_objective"], "regression")
+            self.assertEqual(metrics["selection_metric"], "val_rmse")
+            self.assertIn("test_accuracy", metrics)
+
     def test_auto_raw_experiment_builds_group_subject_command_and_summary(self):
         from argparse import Namespace
 
@@ -250,6 +314,9 @@ class RawConformerPipelineTests(unittest.TestCase):
                 batch_size=4,
                 seed=1,
                 device="cuda",
+                training_objective="classification",
+                regression_weight=0.5,
+                selection_metric="val_balanced_accuracy",
                 use_eog_cross_attention=False,
                 use_temporal_delta=True,
                 use_eog_gate=False,
@@ -265,6 +332,10 @@ class RawConformerPipelineTests(unittest.TestCase):
             self.assertIn("eeg", command)
             self.assertIn("--seed", command)
             self.assertIn("1", command)
+            self.assertIn("--training-objective", command)
+            self.assertIn("classification", command)
+            self.assertIn("--selection-metric", command)
+            self.assertIn("val_balanced_accuracy", command)
             self.assertIn("--use-temporal-delta", command)
             self.assertNotIn("--use-eog-cross-attention", command)
             self.assertIn(str(tmp_path / "runs" / "raw_eeg_eog_cross_group_subject_f2"), command)
@@ -310,6 +381,9 @@ class RawConformerPipelineTests(unittest.TestCase):
                 seed=0,
                 device="cuda",
                 poll_seconds=30,
+                training_objective="classification",
+                regression_weight=0.5,
+                selection_metric="val_balanced_accuracy",
             )
 
             eeg_command = build_auto_command(args, EXPERIMENTS[0])
@@ -318,6 +392,10 @@ class RawConformerPipelineTests(unittest.TestCase):
 
             self.assertIn("raw_eeg_only_binary_group_subject_f", eeg_command)
             self.assertIn("eeg", eeg_command)
+            self.assertIn("--training-objective", eeg_command)
+            self.assertIn("classification", eeg_command)
+            self.assertIn("--selection-metric", eeg_command)
+            self.assertIn("val_balanced_accuracy", eeg_command)
             self.assertIn("--no-use-eog-cross-attention", eeg_command)
             self.assertIn("raw_eog_only_binary_group_subject_f", eog_command)
             self.assertIn("eog", eog_command)

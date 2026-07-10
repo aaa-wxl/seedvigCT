@@ -107,6 +107,12 @@ def build_auto_command(args, experiment):
         "--poll-seconds",
         str(args.poll_seconds),
     ]
+    if args.training_objective != "multitask":
+        command.extend(["--training-objective", args.training_objective])
+    if args.regression_weight != 0.5:
+        command.extend(["--regression-weight", str(args.regression_weight)])
+    if args.selection_metric != "auto":
+        command.extend(["--selection-metric", args.selection_metric])
     if experiment.get("use_eog_cross_attention"):
         command.append("--use-eog-cross-attention")
     else:
@@ -128,6 +134,8 @@ def run_plan(args):
             "event": "plan_start",
             "experiments": [experiment["name"] for experiment in EXPERIMENTS],
             "gpu_max_used_mb": args.gpu_max_used_mb,
+            "training_objective": args.training_objective,
+            "selection_metric": args.selection_metric,
         },
     )
     for experiment in EXPERIMENTS:
@@ -165,6 +173,24 @@ def main():
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--training-objective", choices=("multitask", "classification", "regression"), default="multitask")
+    parser.add_argument("--regression-weight", type=float, default=0.5)
+    parser.add_argument(
+        "--selection-metric",
+        choices=(
+            "auto",
+            "val_loss",
+            "val_classification",
+            "val_regression",
+            "val_accuracy",
+            "val_macro_f1",
+            "val_balanced_accuracy",
+            "val_mae",
+            "val_rmse",
+            "val_pearson",
+        ),
+        default="auto",
+    )
     parser.add_argument("--poll-seconds", type=int, default=30)
     parser.add_argument("--gpu-max-used-mb", type=int, default=1024)
     parser.add_argument("--gpu-poll-seconds", type=int, default=120)

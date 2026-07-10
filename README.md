@@ -73,6 +73,24 @@ Useful raw binary group-subject ablations:
   --state-dir runs\auto_raw_eog_only_binary_group_subject `
   --no-use-eog-cross-attention
 
+# raw EOG-only, CE-only classification objective
+& 'C:\Users\ASUS\miniconda3\envs\torch\python.exe' -m experiments.auto_raw_experiments `
+  --input-mode eog `
+  --label-mode binary `
+  --training-objective classification `
+  --prefix raw_eog_only_binary_group_subject_cls_f `
+  --state-dir runs\auto_raw_eog_only_binary_group_subject_cls `
+  --no-use-eog-cross-attention
+
+# raw EOG-only, PERCLOS regression objective; binary metrics use thresholded predictions
+& 'C:\Users\ASUS\miniconda3\envs\torch\python.exe' -m experiments.auto_raw_experiments `
+  --input-mode eog `
+  --label-mode binary `
+  --training-objective regression `
+  --prefix raw_eog_only_binary_group_subject_reg_f `
+  --state-dir runs\auto_raw_eog_only_binary_group_subject_reg `
+  --no-use-eog-cross-attention
+
 # raw EEG+EOG cross-attention with temporal delta, EOG gate, and modality dropout
 & 'C:\Users\ASUS\miniconda3\envs\torch\python.exe' -m experiments.auto_raw_experiments `
   --input-mode eeg_eog `

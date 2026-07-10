@@ -69,6 +69,12 @@ def build_command(args, fold):
         "--device",
         args.device,
     ]
+    if args.training_objective != "multitask":
+        command.extend(["--training-objective", args.training_objective])
+    if args.regression_weight != 0.5:
+        command.extend(["--regression-weight", str(args.regression_weight)])
+    if args.selection_metric != "auto":
+        command.extend(["--selection-metric", args.selection_metric])
     if args.use_eog_cross_attention:
         command.append("--use-eog-cross-attention")
     if args.use_temporal_delta:
@@ -142,6 +148,8 @@ def run_queue(args):
             "label_mode": args.label_mode,
             "input_mode": args.input_mode,
             "seed": args.seed,
+            "training_objective": args.training_objective,
+            "selection_metric": args.selection_metric,
             "use_eog_cross_attention": args.use_eog_cross_attention,
             "use_temporal_delta": args.use_temporal_delta,
             "use_eog_gate": args.use_eog_gate,
@@ -219,6 +227,24 @@ def main():
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--training-objective", choices=("multitask", "classification", "regression"), default="multitask")
+    parser.add_argument("--regression-weight", type=float, default=0.5)
+    parser.add_argument(
+        "--selection-metric",
+        choices=(
+            "auto",
+            "val_loss",
+            "val_classification",
+            "val_regression",
+            "val_accuracy",
+            "val_macro_f1",
+            "val_balanced_accuracy",
+            "val_mae",
+            "val_rmse",
+            "val_pearson",
+        ),
+        default="auto",
+    )
     parser.add_argument("--poll-seconds", type=int, default=30)
     parser.add_argument("--use-eog-cross-attention", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--use-temporal-delta", action="store_true")

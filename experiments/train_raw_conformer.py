@@ -9,12 +9,26 @@ from torch.utils.data import DataLoader
 
 from seedvig.metrics import classification_metrics, regression_metrics
 from seedvig.models import RawEEGConformer
-from seedvig.raw_dataset import LABEL_MODE_CHOICES, RawSeedVIGSequenceDataset, label_mode_num_classes
+from seedvig.raw_dataset import LABEL_MODE_CHOICES, RawSeedVIGSequenceDataset, label_mode_num_classes, perclos_to_class
 from seedvig.reference_results import compare_to_references
 
 
 DEFAULT_DATA_ROOT = Path(r"D:\eeg-eog\data\SEED-VIG")
 INPUT_MODE_CHOICES = ("eeg", "eog", "eeg_eog")
+TRAINING_OBJECTIVE_CHOICES = ("multitask", "classification", "regression")
+SELECTION_METRIC_CHOICES = (
+    "auto",
+    "val_loss",
+    "val_classification",
+    "val_regression",
+    "val_accuracy",
+    "val_macro_f1",
+    "val_balanced_accuracy",
+    "val_mae",
+    "val_rmse",
+    "val_pearson",
+)
+LOWER_IS_BETTER_SELECTIONS = {"val_loss", "val_classification", "val_regression", "val_mae", "val_rmse"}
 
 
 def _move_to_device(value, device):
@@ -25,13 +39,40 @@ def _move_to_device(value, device):
     return value
 
 
-def _loss(outputs, targets):
+def _loss(outputs, targets, objective="multitask", regression_weight=0.5):
     class_loss = F.cross_entropy(outputs["class_logits"], targets["class"].long())
     regression_loss = F.smooth_l1_loss(outputs["perclos"].squeeze(-1), targets["perclos"].float())
-    return class_loss + 0.5 * regression_loss, {
+    if objective == "classification":
+        loss = class_loss
+    elif objective == "regression":
+        loss = regression_loss
+    elif objective == "multitask":
+        loss = class_loss + regression_weight * regression_loss
+    else:
+        raise ValueError(f"objective must be one of: {TRAINING_OBJECTIVE_CHOICES}")
+    return loss, {
         "classification": class_loss.detach(),
         "regression": regression_loss.detach(),
     }
+
+
+def _resolve_selection_metric(selection_metric, objective):
+    if selection_metric != "auto":
+        return selection_metric
+    if objective == "classification":
+        return "val_balanced_accuracy"
+    if objective == "regression":
+        return "val_rmse"
+    return "val_loss"
+
+
+def _is_improved(row, selection_metric, best_score):
+    score = float(row[selection_metric])
+    if best_score is None:
+        return True, score
+    if selection_metric in LOWER_IS_BETTER_SELECTIONS:
+        return score < best_score, score
+    return score > best_score, score
 
 
 def _model_inputs(batch, input_mode):
@@ -42,7 +83,18 @@ def _model_inputs(batch, input_mode):
     return batch["eeg"], None
 
 
-def _evaluate(model, loader, device, num_classes, max_batches=None, prefix="test", input_mode="eeg"):
+def _evaluate(
+    model,
+    loader,
+    device,
+    num_classes,
+    max_batches=None,
+    prefix="test",
+    input_mode="eeg",
+    training_objective="multitask",
+    regression_weight=0.5,
+    label_mode="three_class",
+):
     was_training = model.training
     model.eval()
     totals = {"loss": 0.0, "classification": 0.0, "regression": 0.0}
@@ -56,13 +108,17 @@ def _evaluate(model, loader, device, num_classes, max_batches=None, prefix="test
             batch = _move_to_device(batch, device)
             signal, eog = _model_inputs(batch, input_mode)
             outputs = model(signal, eog=eog)
-            loss, components = _loss(outputs, batch["targets"])
+            loss, components = _loss(outputs, batch["targets"], training_objective, regression_weight)
+            perclos_prediction = outputs["perclos"].squeeze(-1).detach().cpu()
             totals["loss"] += float(loss.detach().cpu())
             totals["classification"] += float(components["classification"].cpu())
             totals["regression"] += float(components["regression"].cpu())
-            class_predictions.append(outputs["class_logits"].argmax(dim=1).detach().cpu())
+            if training_objective == "regression":
+                class_predictions.append(perclos_to_class(perclos_prediction, label_mode))
+            else:
+                class_predictions.append(outputs["class_logits"].argmax(dim=1).detach().cpu())
             class_targets.append(batch["targets"]["class"].long().detach().cpu())
-            perclos_predictions.append(outputs["perclos"].squeeze(-1).detach().cpu())
+            perclos_predictions.append(perclos_prediction)
             perclos_targets.append(batch["targets"]["perclos"].float().detach().cpu())
             steps += 1
             if max_batches is not None and steps >= max_batches:
@@ -127,6 +183,9 @@ def run_training(
     use_temporal_delta=False,
     use_eog_gate=False,
     eog_dropout=0.0,
+    training_objective="multitask",
+    regression_weight=0.5,
+    selection_metric="auto",
 ):
     torch.manual_seed(seed)
     data_root = Path(data_root)
@@ -134,6 +193,11 @@ def run_training(
     run_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device(device)
     num_classes = label_mode_num_classes(label_mode)
+    if training_objective not in TRAINING_OBJECTIVE_CHOICES:
+        raise ValueError(f"training_objective must be one of: {TRAINING_OBJECTIVE_CHOICES}")
+    selection_metric = _resolve_selection_metric(selection_metric, training_objective)
+    if selection_metric not in SELECTION_METRIC_CHOICES:
+        raise ValueError(f"selection_metric must be one of: {SELECTION_METRIC_CHOICES}")
     if input_mode not in INPUT_MODE_CHOICES:
         raise ValueError(f"input_mode must be one of: {INPUT_MODE_CHOICES}")
     if use_eog_cross_attention and input_mode == "eeg":
@@ -172,6 +236,7 @@ def run_training(
         eog_dropout=eog_dropout,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    best_score = None
     best_val_loss = None
     best_epoch = 0
     best_model_path = run_dir / "best_model.pt"
@@ -186,7 +251,7 @@ def run_training(
             batch = _move_to_device(batch, device)
             signal, eog = _model_inputs(batch, input_mode)
             outputs = model(signal, eog=eog)
-            loss, components = _loss(outputs, batch["targets"])
+            loss, components = _loss(outputs, batch["targets"], training_objective, regression_weight)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
@@ -214,32 +279,65 @@ def run_training(
             "window_transformer_layers": window_transformer_layers,
             "temporal_layers": temporal_layers,
             "input_mode": input_mode,
+            "training_objective": training_objective,
+            "regression_weight": regression_weight,
+            "selection_metric": selection_metric,
             "use_temporal_delta": use_temporal_delta,
             "use_eog_gate": use_eog_gate,
             "eog_dropout": eog_dropout,
         }
-        row.update(_evaluate(model, val_loader, device, num_classes, eval_max_batches, prefix="val", input_mode=input_mode))
-        improved = best_val_loss is None or row["val_loss"] < best_val_loss
+        row.update(
+            _evaluate(
+                model,
+                val_loader,
+                device,
+                num_classes,
+                eval_max_batches,
+                prefix="val",
+                input_mode=input_mode,
+                training_objective=training_objective,
+                regression_weight=regression_weight,
+                label_mode=label_mode,
+            )
+        )
+        improved, score = _is_improved(row, selection_metric, best_score)
         row["improved"] = improved
         if improved:
+            best_score = score
             best_val_loss = row["val_loss"]
             best_epoch = epoch
             torch.save({"model_state_dict": model.state_dict(), "epoch": epoch, "metrics": row}, best_model_path)
         row["best_epoch"] = best_epoch
         row["best_val_loss"] = best_val_loss
+        row["best_selection_score"] = best_score
         _write_epoch_log(run_dir, row, write_header=(epoch == 1))
         last_metrics = row
 
     checkpoint = torch.load(best_model_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
-    last_metrics.update(_evaluate(model, test_loader, device, num_classes, eval_max_batches, prefix="test", input_mode=input_mode))
+    last_metrics.update(
+        _evaluate(
+            model,
+            test_loader,
+            device,
+            num_classes,
+            eval_max_batches,
+            prefix="test",
+            input_mode=input_mode,
+            training_objective=training_objective,
+            regression_weight=regression_weight,
+            label_mode=label_mode,
+        )
+    )
     last_metrics.update(
         {
             "epochs_ran": epochs,
             "total_steps": total_steps,
             "best_model_path": str(best_model_path),
             "run_dir": str(run_dir),
-            "selection_metric": "val_loss",
+            "selection_metric": selection_metric,
+            "training_objective": training_objective,
+            "regression_weight": regression_weight,
         }
     )
     last_metrics["reference_comparisons"] = compare_to_references(last_metrics, split_strategy)
@@ -281,6 +379,9 @@ def main():
     parser.add_argument("--use-temporal-delta", action="store_true")
     parser.add_argument("--use-eog-gate", action="store_true")
     parser.add_argument("--eog-dropout", type=float, default=0.0)
+    parser.add_argument("--training-objective", choices=TRAINING_OBJECTIVE_CHOICES, default="multitask")
+    parser.add_argument("--regression-weight", type=float, default=0.5)
+    parser.add_argument("--selection-metric", choices=SELECTION_METRIC_CHOICES, default="auto")
     args = parser.parse_args()
 
     metrics = run_training(
@@ -309,6 +410,9 @@ def main():
         use_temporal_delta=args.use_temporal_delta,
         use_eog_gate=args.use_eog_gate,
         eog_dropout=args.eog_dropout,
+        training_objective=args.training_objective,
+        regression_weight=args.regression_weight,
+        selection_metric=args.selection_metric,
     )
     for key, value in metrics.items():
         if isinstance(value, (int, float, bool, str)):
