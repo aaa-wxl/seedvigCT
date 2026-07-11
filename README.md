@@ -10,6 +10,8 @@ Current advisor-facing summary: `reports/advisor_brief_2026-07-11.md`.
 
 Chinese EI draft: `reports/ei_draft_cn_2026-07-11.md`.
 
+Advisor Word brief for the current mainline: `reports/seedvig_raw_eeg_eog_advisor_brief_cn.docx`.
+
 Revised architecture figure: `reports/raw_eeg_eog_reliability_gated_conformer_cn.png`.
 
 ```powershell
