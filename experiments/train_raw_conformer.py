@@ -39,7 +39,7 @@ def _move_to_device(value, device):
     return value
 
 
-def _loss(outputs, targets, objective="multitask", regression_weight=0.5):
+def _loss(outputs, targets, objective="regression", regression_weight=0.5):
     class_loss = F.cross_entropy(outputs["class_logits"], targets["class"].long())
     regression_loss = F.smooth_l1_loss(outputs["perclos"].squeeze(-1), targets["perclos"].float())
     if objective == "classification":
@@ -91,7 +91,7 @@ def _evaluate(
     max_batches=None,
     prefix="test",
     input_mode="eeg",
-    training_objective="multitask",
+    training_objective="regression",
     regression_weight=0.5,
     label_mode="three_class",
 ):
@@ -182,8 +182,9 @@ def run_training(
     input_mode="eeg",
     use_temporal_delta=False,
     use_eog_gate=False,
+    use_eog_anchor_residual=False,
     eog_dropout=0.0,
-    training_objective="multitask",
+    training_objective="regression",
     regression_weight=0.5,
     selection_metric="auto",
 ):
@@ -200,15 +201,17 @@ def run_training(
         raise ValueError(f"selection_metric must be one of: {SELECTION_METRIC_CHOICES}")
     if input_mode not in INPUT_MODE_CHOICES:
         raise ValueError(f"input_mode must be one of: {INPUT_MODE_CHOICES}")
-    if use_eog_cross_attention and input_mode == "eeg":
+    if use_eog_anchor_residual:
+        use_eog_cross_attention = False
+    if (use_eog_cross_attention or use_eog_anchor_residual) and input_mode == "eeg":
         input_mode = "eeg_eog"
-    if input_mode == "eog" and use_eog_cross_attention:
-        raise ValueError("EOG-only mode cannot use EOG cross-attention")
+    if input_mode == "eog" and (use_eog_cross_attention or use_eog_anchor_residual):
+        raise ValueError("EOG-only mode cannot use EEG/EOG fusion")
 
     dataset_args = {
         "root_path": data_root,
         "cache_dir": cache_dir,
-        "include_eog": include_eog or input_mode in ("eog", "eeg_eog") or use_eog_cross_attention,
+        "include_eog": include_eog or input_mode in ("eog", "eeg_eog") or use_eog_cross_attention or use_eog_anchor_residual,
         "sequence_length": sequence_length,
         "split_strategy": split_strategy,
         "fold": fold,
@@ -233,6 +236,7 @@ def run_training(
         use_eog_cross_attention=use_eog_cross_attention,
         use_temporal_delta=use_temporal_delta,
         use_eog_gate=use_eog_gate,
+        use_eog_anchor_residual=use_eog_anchor_residual,
         eog_dropout=eog_dropout,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
@@ -284,6 +288,7 @@ def run_training(
             "selection_metric": selection_metric,
             "use_temporal_delta": use_temporal_delta,
             "use_eog_gate": use_eog_gate,
+            "use_eog_anchor_residual": use_eog_anchor_residual,
             "eog_dropout": eog_dropout,
         }
         row.update(
@@ -378,8 +383,9 @@ def main():
     parser.add_argument("--use-eog-cross-attention", action="store_true")
     parser.add_argument("--use-temporal-delta", action="store_true")
     parser.add_argument("--use-eog-gate", action="store_true")
+    parser.add_argument("--use-eog-anchor-residual", action="store_true")
     parser.add_argument("--eog-dropout", type=float, default=0.0)
-    parser.add_argument("--training-objective", choices=TRAINING_OBJECTIVE_CHOICES, default="multitask")
+    parser.add_argument("--training-objective", choices=TRAINING_OBJECTIVE_CHOICES, default="regression")
     parser.add_argument("--regression-weight", type=float, default=0.5)
     parser.add_argument("--selection-metric", choices=SELECTION_METRIC_CHOICES, default="auto")
     args = parser.parse_args()
@@ -409,6 +415,7 @@ def main():
         use_eog_cross_attention=args.use_eog_cross_attention,
         use_temporal_delta=args.use_temporal_delta,
         use_eog_gate=args.use_eog_gate,
+        use_eog_anchor_residual=args.use_eog_anchor_residual,
         eog_dropout=args.eog_dropout,
         training_objective=args.training_objective,
         regression_weight=args.regression_weight,

@@ -6,6 +6,8 @@ The code reads SEED-VIG raw EEG windows directly from `Raw_Data/*.mat`, aligns
 them with `perclos_labels/*.mat`, and reports metrics against the existing
 feature-based experiments from `D:\eeg-eog`.
 
+Current advisor-facing summary: `reports/advisor_brief_2026-07-11.md`.
+
 ```powershell
 & 'C:\Users\ASUS\miniconda3\envs\torch\python.exe' -m experiments.train_raw_conformer `
   --data-root 'D:\eeg-eog\data\SEED-VIG' `
@@ -55,6 +57,8 @@ EEG+EOG cross-attention run:
 ```
 
 Useful raw binary group-subject ablations:
+
+Default training uses PERCLOS regression; binary accuracy/F1/BalAcc are computed by thresholding the regression output. Use `--training-objective classification` or `--training-objective multitask` only for ablations.
 
 ```powershell
 # raw EEG-only

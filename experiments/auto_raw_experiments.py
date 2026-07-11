@@ -69,13 +69,14 @@ def build_command(args, fold):
         "--device",
         args.device,
     ]
-    if args.training_objective != "multitask":
-        command.extend(["--training-objective", args.training_objective])
+    command.extend(["--training-objective", args.training_objective])
     if args.regression_weight != 0.5:
         command.extend(["--regression-weight", str(args.regression_weight)])
     if args.selection_metric != "auto":
         command.extend(["--selection-metric", args.selection_metric])
-    if args.use_eog_cross_attention:
+    if args.use_eog_anchor_residual:
+        command.append("--use-eog-anchor-residual")
+    elif args.use_eog_cross_attention:
         command.append("--use-eog-cross-attention")
     if args.use_temporal_delta:
         command.append("--use-temporal-delta")
@@ -138,6 +139,8 @@ def summarize_folds(run_root, prefix, split_strategy, state_dir, folds=(0, 1, 2,
 
 
 def run_queue(args):
+    if args.use_eog_anchor_residual:
+        args.use_eog_cross_attention = False
     event_log = args.state_dir / "events.jsonl"
     _append_jsonl(
         event_log,
@@ -153,6 +156,7 @@ def run_queue(args):
             "use_eog_cross_attention": args.use_eog_cross_attention,
             "use_temporal_delta": args.use_temporal_delta,
             "use_eog_gate": args.use_eog_gate,
+            "use_eog_anchor_residual": args.use_eog_anchor_residual,
             "eog_dropout": args.eog_dropout,
         },
     )
@@ -227,7 +231,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--training-objective", choices=("multitask", "classification", "regression"), default="multitask")
+    parser.add_argument("--training-objective", choices=("multitask", "classification", "regression"), default="regression")
     parser.add_argument("--regression-weight", type=float, default=0.5)
     parser.add_argument(
         "--selection-metric",
@@ -249,6 +253,7 @@ def main():
     parser.add_argument("--use-eog-cross-attention", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--use-temporal-delta", action="store_true")
     parser.add_argument("--use-eog-gate", action="store_true")
+    parser.add_argument("--use-eog-anchor-residual", action="store_true")
     parser.add_argument("--eog-dropout", type=float, default=0.0)
     raise SystemExit(run_queue(parser.parse_args()))
 

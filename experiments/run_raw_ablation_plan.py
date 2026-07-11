@@ -107,8 +107,7 @@ def build_auto_command(args, experiment):
         "--poll-seconds",
         str(args.poll_seconds),
     ]
-    if args.training_objective != "multitask":
-        command.extend(["--training-objective", args.training_objective])
+    command.extend(["--training-objective", args.training_objective])
     if args.regression_weight != 0.5:
         command.extend(["--regression-weight", str(args.regression_weight)])
     if args.selection_metric != "auto":
@@ -173,7 +172,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--training-objective", choices=("multitask", "classification", "regression"), default="multitask")
+    parser.add_argument("--training-objective", choices=("multitask", "classification", "regression"), default="regression")
     parser.add_argument("--regression-weight", type=float, default=0.5)
     parser.add_argument(
         "--selection-metric",

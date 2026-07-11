@@ -19,6 +19,7 @@ class RawEEGConformer(nn.Module):
         use_eog_cross_attention=False,
         use_temporal_delta=False,
         use_eog_gate=False,
+        use_eog_anchor_residual=False,
         eog_dropout=0.0,
     ):
         super().__init__()
@@ -34,6 +35,7 @@ class RawEEGConformer(nn.Module):
         self.use_eog_cross_attention = bool(use_eog_cross_attention)
         self.use_temporal_delta = bool(use_temporal_delta)
         self.use_eog_gate = bool(use_eog_gate)
+        self.use_eog_anchor_residual = bool(use_eog_anchor_residual)
         self.eog_dropout = float(eog_dropout)
         self.patch_encoder = nn.Sequential(
             nn.Conv2d(1, 16, kernel_size=(1, 64), padding=(0, 32), bias=False),
@@ -49,7 +51,7 @@ class RawEEGConformer(nn.Module):
             nn.AvgPool2d(kernel_size=(1, 8), stride=(1, 8)),
             nn.Dropout(dropout),
         )
-        if self.use_eog_cross_attention:
+        if self.use_eog_cross_attention or self.use_eog_anchor_residual:
             self.eog_patch_encoder = nn.Sequential(
                 nn.Conv2d(1, 16, kernel_size=(1, 32), padding=(0, 16), bias=False),
                 nn.BatchNorm2d(16),
@@ -63,6 +65,7 @@ class RawEEGConformer(nn.Module):
                 nn.AvgPool2d(kernel_size=(1, 8), stride=(1, 8)),
                 nn.Dropout(dropout),
             )
+        if self.use_eog_cross_attention:
             self.eog_cross_attention = nn.MultiheadAttention(
                 embedding_dim,
                 attention_heads,
@@ -108,6 +111,15 @@ class RawEEGConformer(nn.Module):
         head_dim = embedding_dim * 2 if self.use_temporal_delta else embedding_dim
         self.classifier = nn.Linear(head_dim, num_classes)
         self.perclos_head = nn.Sequential(nn.Linear(head_dim, 1), nn.Sigmoid())
+        if self.use_eog_anchor_residual:
+            self.eeg_perclos_head = nn.Sequential(nn.Linear(head_dim, 1), nn.Sigmoid())
+            self.eog_perclos_head = nn.Sequential(nn.Linear(head_dim, 1), nn.Sigmoid())
+            self.eog_residual_gate = nn.Sequential(
+                nn.Linear(head_dim * 2, head_dim),
+                nn.GELU(),
+                nn.Linear(head_dim, 1),
+                nn.Sigmoid(),
+            )
 
     def _encode_eog_tokens(self, eog, batch_size, sequence_length):
         if eog.ndim != 4:
@@ -116,6 +128,19 @@ class RawEEGConformer(nn.Module):
             raise ValueError(f"expected {self.eog_channels} EOG channels, got {eog.shape[2]}")
         eog_windows = eog.reshape(batch_size * sequence_length, 1, self.eog_channels, eog.shape[-1])
         return self.eog_patch_encoder(eog_windows).squeeze(2).transpose(1, 2)
+
+    def _pool_sequence(self, window_embeddings):
+        sequence_length = window_embeddings.shape[1]
+        sequence = window_embeddings + self.position_embedding[:, :sequence_length]
+        sequence = self.temporal_transformer(sequence)
+        pooled = sequence[:, -1]
+        if self.use_temporal_delta:
+            if sequence_length > 1:
+                delta = sequence[:, -1] - sequence[:, -2]
+            else:
+                delta = torch.zeros_like(pooled)
+            pooled = torch.cat([pooled, delta], dim=-1)
+        return pooled, sequence
 
     def forward(self, eeg, eog=None):
         if eeg.ndim != 4:
@@ -131,6 +156,28 @@ class RawEEGConformer(nn.Module):
         tokens = self.window_transformer(tokens)
         window_embeddings = tokens.mean(dim=1).reshape(batch_size, sequence_length, self.embedding_dim)
         outputs = {}
+        if self.use_eog_anchor_residual:
+            if eog is None:
+                raise ValueError("EOG-anchor residual fusion requires EOG input")
+            eog_tokens = self._encode_eog_tokens(eog, batch_size, sequence_length)
+            eog_window_embeddings = eog_tokens.mean(dim=1).reshape(batch_size, sequence_length, self.embedding_dim)
+            eeg_pooled, _ = self._pool_sequence(window_embeddings)
+            eog_pooled, _ = self._pool_sequence(eog_window_embeddings)
+            perclos_eeg = self.eeg_perclos_head(eeg_pooled)
+            perclos_eog = self.eog_perclos_head(eog_pooled)
+            residual_gate = self.eog_residual_gate(torch.cat([eeg_pooled, eog_pooled], dim=-1))
+            pooled = eog_pooled + residual_gate * (eeg_pooled - eog_pooled)
+            outputs.update(
+                {
+                    "class_logits": self.classifier(pooled),
+                    "perclos": perclos_eog + residual_gate * (perclos_eeg - perclos_eog),
+                    "perclos_eeg": perclos_eeg,
+                    "perclos_eog": perclos_eog,
+                    "eog_residual_gate": residual_gate,
+                }
+            )
+            return outputs
+
         if self.use_eog_cross_attention and eog is not None:
             eog_tokens = self._encode_eog_tokens(eog, batch_size, sequence_length)
             query = window_embeddings.reshape(batch_size * sequence_length, 1, self.embedding_dim)
@@ -156,15 +203,7 @@ class RawEEGConformer(nn.Module):
             )
             outputs["eog_attention_weights"] = weights.reshape(batch_size, sequence_length, *weights.shape[1:])
 
-        sequence = window_embeddings + self.position_embedding[:, :sequence_length]
-        sequence = self.temporal_transformer(sequence)
-        pooled = sequence[:, -1]
-        if self.use_temporal_delta:
-            if sequence_length > 1:
-                delta = sequence[:, -1] - sequence[:, -2]
-            else:
-                delta = torch.zeros_like(pooled)
-            pooled = torch.cat([pooled, delta], dim=-1)
+        pooled, _ = self._pool_sequence(window_embeddings)
         outputs.update(
             {
                 "class_logits": self.classifier(pooled),

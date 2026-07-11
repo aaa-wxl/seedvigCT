@@ -151,6 +151,61 @@ class RawConformerPipelineTests(unittest.TestCase):
         self.assertEqual(tuple(outputs["perclos"].shape), (2, 1))
         self.assertEqual(tuple(outputs["eog_gate"].shape), (2, 3, 1))
 
+    def test_raw_eeg_conformer_supports_eog_anchor_residual_fusion(self):
+        from seedvig.models import RawEEGConformer
+
+        model = RawEEGConformer(
+            eeg_channels=17,
+            eog_channels=7,
+            embedding_dim=32,
+            attention_heads=4,
+            window_transformer_layers=0,
+            temporal_layers=0,
+            use_temporal_delta=True,
+            use_eog_anchor_residual=True,
+            num_classes=2,
+        )
+        outputs = model(torch.randn(2, 3, 17, 1600), eog=torch.randn(2, 3, 7, 1000))
+
+        expected = outputs["perclos_eog"] + outputs["eog_residual_gate"] * (
+            outputs["perclos_eeg"] - outputs["perclos_eog"]
+        )
+        self.assertEqual(tuple(outputs["class_logits"].shape), (2, 2))
+        self.assertEqual(tuple(outputs["perclos"].shape), (2, 1))
+        self.assertEqual(tuple(outputs["perclos_eeg"].shape), (2, 1))
+        self.assertEqual(tuple(outputs["perclos_eog"].shape), (2, 1))
+        self.assertEqual(tuple(outputs["eog_residual_gate"].shape), (2, 1))
+        self.assertTrue(torch.allclose(outputs["perclos"], expected))
+        self.assertTrue(torch.all(outputs["perclos"] >= 0.0))
+        self.assertTrue(torch.all(outputs["perclos"] <= 1.0))
+
+    def test_eog_corruption_preserves_eeg_and_masks_eog(self):
+        from experiments.evaluate_eog_corruption import corrupt_batch
+
+        batch = {
+            "eeg": torch.ones(2, 3, 17, 4),
+            "eog": torch.ones(2, 3, 7, 4),
+        }
+        corrupted = corrupt_batch(batch, kind="mask", value=0.5, seed=0)
+
+        self.assertTrue(torch.equal(corrupted["eeg"], batch["eeg"]))
+        self.assertFalse(torch.equal(corrupted["eog"], batch["eog"]))
+        self.assertEqual(corrupted["eog"].shape, batch["eog"].shape)
+
+    def test_worst_error_strata_reports_fusion_delta(self):
+        from experiments.evaluate_eog_corruption import worst_error_strata
+
+        rows = worst_error_strata(
+            eog_predictions=torch.tensor([0.0, 0.2, 0.9, 0.9]),
+            fusion_predictions=torch.tensor([0.0, 0.2, 0.6, 0.7]),
+            targets=torch.tensor([0.0, 0.0, 0.5, 0.5]),
+            bins=2,
+        )
+
+        self.assertEqual(rows[-1]["stratum"], "worst_50%")
+        self.assertLess(rows[-1]["fusion_rmse"], rows[-1]["eog_rmse"])
+        self.assertLess(rows[-1]["delta_rmse"], 0.0)
+
     def test_reference_comparison_reports_deltas_against_existing_experiments(self):
         from seedvig.reference_results import compare_to_references
 
@@ -229,6 +284,8 @@ class RawConformerPipelineTests(unittest.TestCase):
 
             self.assertTrue((run_dir / "final_metrics.json").exists())
             self.assertEqual(metrics["input_mode"], "eog")
+            self.assertEqual(metrics["training_objective"], "regression")
+            self.assertEqual(metrics["selection_metric"], "val_rmse")
 
     def test_training_smoke_supports_classification_objective_auto_selection(self):
         from experiments.train_raw_conformer import run_training
@@ -320,6 +377,7 @@ class RawConformerPipelineTests(unittest.TestCase):
                 use_eog_cross_attention=False,
                 use_temporal_delta=True,
                 use_eog_gate=False,
+                use_eog_anchor_residual=True,
                 eog_dropout=0.0,
             )
 
@@ -337,8 +395,15 @@ class RawConformerPipelineTests(unittest.TestCase):
             self.assertIn("--selection-metric", command)
             self.assertIn("val_balanced_accuracy", command)
             self.assertIn("--use-temporal-delta", command)
+            self.assertIn("--use-eog-anchor-residual", command)
             self.assertNotIn("--use-eog-cross-attention", command)
             self.assertIn(str(tmp_path / "runs" / "raw_eeg_eog_cross_group_subject_f2"), command)
+
+            args.training_objective = "multitask"
+            args.selection_metric = "auto"
+            command = build_command(args, fold=2)
+            self.assertIn("--training-objective", command)
+            self.assertIn("multitask", command)
 
             for fold, accuracy in enumerate((0.5, 0.6)):
                 run_dir = args.run_root / f"{args.prefix}{fold}"
@@ -406,6 +471,12 @@ class RawConformerPipelineTests(unittest.TestCase):
             self.assertIn("--use-temporal-delta", delta_gate_command)
             self.assertIn("--use-eog-gate", delta_gate_command)
             self.assertIn("--eog-dropout", delta_gate_command)
+
+            args.training_objective = "multitask"
+            args.selection_metric = "auto"
+            eeg_command = build_auto_command(args, EXPERIMENTS[0])
+            self.assertIn("--training-objective", eeg_command)
+            self.assertIn("multitask", eeg_command)
 
 
 if __name__ == "__main__":
