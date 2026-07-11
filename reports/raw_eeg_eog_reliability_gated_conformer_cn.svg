@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1621" height="1320" viewBox="0 0 1621 1320">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#111"/>
+    </marker>
+    <style>
+      .txt { font-family: "Microsoft YaHei", "SimHei", Arial, sans-serif; fill: #111; text-anchor: middle; dominant-baseline: middle; }
+      .t18 { font-size: 18px; }
+      .t20 { font-size: 20px; }
+      .t22 { font-size: 22px; }
+      .t24 { font-size: 24px; }
+      .t28 { font-size: 28px; }
+      .t30 { font-size: 30px; }
+      .box { stroke: #000; stroke-width: 4; rx: 8; ry: 8; }
+      .outer { fill: #f7f7f7; stroke: #000; stroke-width: 4; rx: 28; ry: 28; }
+      .line { stroke: #000; stroke-width: 4; fill: none; marker-end: url(#arrow); }
+      .plain { stroke: #000; stroke-width: 4; fill: none; }
+    </style>
+  </defs>
+
+  <rect width="1621" height="1226" fill="#ffffff"/>
+
+  <!-- top outputs, same style as the copied figure -->
+  <text x="650" y="55" class="txt t22">Binary</text>
+  <text x="650" y="82" class="txt t22">Metrics</text>
+  <rect x="530" y="110" width="240" height="40" fill="#d1ead4" class="box"/>
+  <text x="650" y="130" class="txt t24">Threshold</text>
+  <rect x="545" y="210" width="210" height="42" fill="#d8dbea" class="box"/>
+  <text x="650" y="231" class="txt t22">Linear</text>
+  <path d="M650 210 L650 150" class="line"/>
+
+  <text x="1035" y="55" class="txt t22">PERCLOS</text>
+  <text x="1035" y="82" class="txt t22">Output</text>
+  <rect x="915" y="110" width="240" height="40" fill="#d1ead4" class="box"/>
+  <text x="1035" y="130" class="txt t24">Sigmoid</text>
+  <rect x="930" y="210" width="210" height="42" fill="#d8dbea" class="box"/>
+  <text x="1035" y="231" class="txt t22">Linear</text>
+  <path d="M1035 210 L1035 150" class="line"/>
+
+  <rect x="690" y="310" width="300" height="48" fill="#ded1f2" class="box"/>
+  <text x="840" y="334" class="txt t22">Optional Temporal Delta</text>
+  <path d="M840 310 L650 310 L650 252" class="line"/>
+  <path d="M840 310 L1035 310 L1035 252" class="line"/>
+
+  <!-- left EEG branch -->
+  <rect x="95" y="1150" width="295" height="60" fill="#f4dfe3" class="box"/>
+  <text x="242.5" y="1180" class="txt t24">Raw EEG</text>
+  <rect x="100" y="1045" width="285" height="62" fill="#bfe3ee" class="box"/>
+  <text x="242.5" y="1066" class="txt t22">EEG CNN</text>
+  <text x="242.5" y="1092" class="txt t22">Patch Encoder</text>
+  <rect x="100" y="950" width="285" height="46" fill="#cfeee9" class="box"/>
+  <text x="242.5" y="973" class="txt t24">EEG Tokens</text>
+
+  <rect x="60" y="558" width="380" height="340" fill="#f7f7f7" class="outer"/>
+  <rect x="135" y="580" width="230" height="35" fill="#fbfac7" class="box"/>
+  <text x="250" y="598" class="txt t18">Add &amp; Norm</text>
+  <rect x="135" y="660" width="230" height="58" fill="#bfe3ee" class="box"/>
+  <text x="250" y="681" class="txt t22">Feed</text>
+  <text x="250" y="705" class="txt t22">Forward</text>
+  <rect x="135" y="748" width="230" height="35" fill="#fbfac7" class="box"/>
+  <text x="250" y="766" class="txt t18">Add &amp; Norm</text>
+  <rect x="135" y="815" width="230" height="55" fill="#f5d9a8" class="box"/>
+  <text x="250" y="833" class="txt t18">Multi-Head</text>
+  <text x="250" y="856" class="txt t18">Self-Attention</text>
+  <text x="455" y="728" class="txt t24">N=1</text>
+
+  <rect x="95" y="467" width="300" height="50" fill="#cfeee9" class="box"/>
+  <text x="245" y="492" class="txt t22">Window Embedding</text>
+
+  <path d="M242.5 1150 L242.5 1107" class="line"/>
+  <path d="M242.5 1045 L242.5 996" class="line"/>
+  <path d="M242.5 950 L242.5 898" class="line"/>
+  <path d="M242.5 558 L242.5 517" class="line"/>
+  <path d="M250 815 L250 783" class="line"/>
+  <path d="M250 748 L250 718" class="line"/>
+  <path d="M250 660 L250 615" class="line"/>
+  <path d="M365 598 L405 598 L405 750 L365 750" class="plain"/>
+  <path d="M135 842 L85 842 L85 750 L135 750" class="plain"/>
+
+  <!-- right EOG branch -->
+  <rect x="1230" y="1150" width="295" height="60" fill="#f4dfe3" class="box"/>
+  <text x="1377.5" y="1180" class="txt t24">Raw EOG</text>
+  <rect x="1235" y="1045" width="285" height="62" fill="#bfe3ee" class="box"/>
+  <text x="1377.5" y="1066" class="txt t22">EOG CNN</text>
+  <text x="1377.5" y="1092" class="txt t22">Patch Encoder</text>
+  <rect x="1235" y="950" width="285" height="46" fill="#cfeee9" class="box"/>
+  <text x="1377.5" y="973" class="txt t24">EOG Tokens</text>
+  <path d="M1377.5 1150 L1377.5 1107" class="line"/>
+  <path d="M1377.5 1045 L1377.5 996" class="line"/>
+
+  <!-- central fusion block -->
+  <rect x="540" y="665" width="520" height="365" fill="#f7f7f7" class="outer"/>
+  <rect x="665" y="975" width="100" height="45" fill="#cfeee9" class="box"/>
+  <text x="715" y="998" class="txt t24">Q</text>
+  <rect x="870" y="975" width="100" height="45" fill="#cfeee9" class="box"/>
+  <text x="920" y="998" class="txt t24">K,V</text>
+  <rect x="640" y="870" width="360" height="60" fill="#f5d9a8" class="box"/>
+  <text x="820" y="890" class="txt t22">Multi-Head</text>
+  <text x="820" y="915" class="txt t22">Cross-Attention</text>
+  <rect x="640" y="780" width="360" height="50" fill="#ded1f2" class="box"/>
+  <text x="820" y="805" class="txt t24">EOG Reliability Gate</text>
+  <rect x="640" y="705" width="360" height="50" fill="#fbfac7" class="box"/>
+  <text x="820" y="730" class="txt t24">Add &amp; Norm</text>
+  <rect x="660" y="635" width="320" height="50" fill="#cfeee9" class="box"/>
+  <text x="820" y="660" class="txt t24">Fused Sequence</text>
+
+  <path d="M395 492 L520 492 L520 997 L665 997" class="line"/>
+  <path d="M1235 973 L1115 973 L1115 997 L970 997" class="line"/>
+  <path d="M715 975 L715 930" class="line"/>
+  <path d="M920 975 L920 930" class="line"/>
+  <path d="M820 870 L820 830" class="line"/>
+  <path d="M820 780 L820 755" class="line"/>
+  <path d="M820 705 L820 685" class="line"/>
+
+  <!-- positional encoding + temporal transformer -->
+  <circle cx="705" cy="598" r="30" fill="#ffffff" stroke="#000" stroke-width="4"/>
+  <path d="M685 598 C695 575 712 575 722 598 C732 621 748 621 758 598" stroke="#000" stroke-width="4" fill="none"/>
+  <text x="575" y="594" class="txt t20">Positional</text>
+  <text x="575" y="620" class="txt t20">Encoding</text>
+  <circle cx="820" cy="598" r="24" fill="#ffffff" stroke="#000" stroke-width="4"/>
+  <line x1="806" y1="598" x2="834" y2="598" stroke="#000" stroke-width="4"/>
+  <line x1="820" y1="584" x2="820" y2="612" stroke="#000" stroke-width="4"/>
+  <path d="M735 598 L796 598" class="line"/>
+  <path d="M820 635 L820 622" class="line"/>
+
+  <rect x="590" y="435" width="460" height="95" fill="#f5d9a8" class="box"/>
+  <text x="820" y="470" class="txt t22">Temporal Transformer Encoder ×1</text>
+  <text x="820" y="500" class="txt t20">Multi-Head Self-Attention + Feed Forward</text>
+  <path d="M820 574 L820 530" class="line"/>
+  <path d="M820 435 L820 358" class="line"/>
+
+  <!-- caption -->
+  <text x="810" y="1285" class="txt t28">Figure: Raw EEG-EOG Reliability-Gated Conformer Architecture</text>
+</svg>

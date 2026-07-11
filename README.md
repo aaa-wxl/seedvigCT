@@ -8,6 +8,10 @@ feature-based experiments from `D:\eeg-eog`.
 
 Current advisor-facing summary: `reports/advisor_brief_2026-07-11.md`.
 
+Chinese EI draft: `reports/ei_draft_cn_2026-07-11.md`.
+
+Revised architecture figure: `reports/raw_eeg_eog_reliability_gated_conformer_cn.png`.
+
 ```powershell
 & 'C:\Users\ASUS\miniconda3\envs\torch\python.exe' -m experiments.train_raw_conformer `
   --data-root 'D:\eeg-eog\data\SEED-VIG' `
