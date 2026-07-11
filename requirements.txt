@@ -1,3 +1,7 @@
-numpy
-scipy
-torch
+# SEED-VIG Raw EEG Conformer
+# Recommended Python: 3.11  (conda create -n seedvig python=3.11)
+# Install:  pip install -r requirements.txt
+
+numpy>=1.24
+scipy>=1.10
+torch>=2.2
