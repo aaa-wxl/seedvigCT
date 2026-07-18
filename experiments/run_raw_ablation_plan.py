@@ -114,6 +114,7 @@ def build_auto_command(args, experiment):
         command.extend(["--selection-metric", args.selection_metric])
     if experiment.get("use_eog_cross_attention"):
         command.append("--use-eog-cross-attention")
+        command.extend(["--cross-attention-direction", experiment.get("cross_attention_direction", "eeg_queries_eog")])
     else:
         command.append("--no-use-eog-cross-attention")
     if experiment.get("use_temporal_delta"):

@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from seedvig.models import CROSS_ATTENTION_DIRECTION_CHOICES
 from seedvig.reference_results import REFERENCE_RESULTS
 
 
@@ -64,6 +65,10 @@ def build_command(args, fold):
         str(args.epochs),
         "--batch-size",
         str(args.batch_size),
+        "--sequence-length",
+        str(args.sequence_length),
+        "--temporal-layers",
+        str(args.temporal_layers),
         "--seed",
         str(args.seed),
         "--device",
@@ -74,10 +79,13 @@ def build_command(args, fold):
         command.extend(["--regression-weight", str(args.regression_weight)])
     if args.selection_metric != "auto":
         command.extend(["--selection-metric", args.selection_metric])
-    if args.use_eog_anchor_residual:
+    if args.use_eog_residual_correction:
+        command.append("--use-eog-residual-correction")
+    elif args.use_eog_anchor_residual:
         command.append("--use-eog-anchor-residual")
     elif args.use_eog_cross_attention:
         command.append("--use-eog-cross-attention")
+        command.extend(["--cross-attention-direction", args.cross_attention_direction])
     if args.use_temporal_delta:
         command.append("--use-temporal-delta")
     if args.use_eog_gate:
@@ -139,7 +147,7 @@ def summarize_folds(run_root, prefix, split_strategy, state_dir, folds=(0, 1, 2,
 
 
 def run_queue(args):
-    if args.use_eog_anchor_residual:
+    if args.use_eog_residual_correction or args.use_eog_anchor_residual:
         args.use_eog_cross_attention = False
     event_log = args.state_dir / "events.jsonl"
     _append_jsonl(
@@ -153,11 +161,15 @@ def run_queue(args):
             "seed": args.seed,
             "training_objective": args.training_objective,
             "selection_metric": args.selection_metric,
+            "sequence_length": args.sequence_length,
             "use_eog_cross_attention": args.use_eog_cross_attention,
             "use_temporal_delta": args.use_temporal_delta,
             "use_eog_gate": args.use_eog_gate,
             "use_eog_anchor_residual": args.use_eog_anchor_residual,
+            "use_eog_residual_correction": args.use_eog_residual_correction,
             "eog_dropout": args.eog_dropout,
+            "temporal_layers": args.temporal_layers,
+            "cross_attention_direction": args.cross_attention_direction,
         },
     )
     for fold in args.folds:
@@ -229,6 +241,8 @@ def main():
     parser.add_argument("--folds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--sequence-length", type=int, default=8)
+    parser.add_argument("--temporal-layers", type=int, default=1)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--training-objective", choices=("multitask", "classification", "regression"), default="regression")
@@ -254,7 +268,13 @@ def main():
     parser.add_argument("--use-temporal-delta", action="store_true")
     parser.add_argument("--use-eog-gate", action="store_true")
     parser.add_argument("--use-eog-anchor-residual", action="store_true")
+    parser.add_argument("--use-eog-residual-correction", action="store_true")
     parser.add_argument("--eog-dropout", type=float, default=0.0)
+    parser.add_argument(
+        "--cross-attention-direction",
+        choices=CROSS_ATTENTION_DIRECTION_CHOICES,
+        default="eeg_queries_eog",
+    )
     raise SystemExit(run_queue(parser.parse_args()))
 
 

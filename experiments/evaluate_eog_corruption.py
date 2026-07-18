@@ -16,6 +16,17 @@ from seedvig.raw_dataset import RawSeedVIGSequenceDataset, label_mode_num_classe
 DEFAULT_DATA_ROOT = Path(r"D:\eeg-eog\data\SEED-VIG")
 DEFAULT_CACHE_DIR = Path(r"D:\seedvig-CT\cache\seedvig_raw_eeg")
 CORRUPTION_CHOICES = ("none", "noise", "mask", "channel_mask", "segment_mask", "zero")
+DEFAULT_NOISE_VALUES = (0.1, 0.25, 0.5, 1.0)
+DEFAULT_MASK_VALUES = (0.1, 0.25, 0.5)
+
+
+def default_corruption_sweep():
+    return (
+        (("none", 0.0),)
+        + tuple(("noise", value) for value in DEFAULT_NOISE_VALUES)
+        + tuple((kind, value) for kind in ("mask", "channel_mask", "segment_mask") for value in DEFAULT_MASK_VALUES)
+        + (("zero", 0.0),)
+    )
 
 
 def _clone_batch(batch):
@@ -106,6 +117,16 @@ def worst_error_strata(eog_predictions, fusion_predictions, targets, bins=4):
     return rows
 
 
+def _gate_values(outputs):
+    values = []
+    for key in ("eog_gate", "reverse_eog_gate", "eog_residual_gate"):
+        if key in outputs:
+            values.append(outputs[key].detach().cpu().reshape(-1))
+    if not values:
+        return torch.empty(0)
+    return torch.cat(values)
+
+
 def _load_model(run_dir, metrics, input_mode, device):
     model = RawEEGConformer(
         eeg_channels=7 if input_mode == "eog" else 17,
@@ -119,7 +140,9 @@ def _load_model(run_dir, metrics, input_mode, device):
         use_temporal_delta=bool(metrics.get("use_temporal_delta", False)),
         use_eog_gate=bool(metrics.get("use_eog_gate", False)),
         use_eog_anchor_residual=bool(metrics.get("use_eog_anchor_residual", False)),
+        use_eog_residual_correction=bool(metrics.get("use_eog_residual_correction", False)),
         eog_dropout=float(metrics.get("eog_dropout", 0.0)),
+        cross_attention_direction=metrics.get("cross_attention_direction", "eeg_queries_eog"),
     ).to(device)
     checkpoint = torch.load(run_dir / "best_model.pt", map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
@@ -127,9 +150,10 @@ def _load_model(run_dir, metrics, input_mode, device):
     return model
 
 
-def _collect_predictions(model, loader, device, input_mode, corruption, value, seed, max_batches=None):
+def _collect_predictions(model, loader, device, input_mode, corruption, value, seed, max_batches=None, collect_gates=False):
     predictions = []
     targets = []
+    gates = []
     with torch.no_grad():
         for step, batch in enumerate(loader):
             batch = corrupt_batch(batch, kind=corruption, value=value, seed=seed + step)
@@ -140,10 +164,16 @@ def _collect_predictions(model, loader, device, input_mode, corruption, value, s
                 outputs = model(batch["eeg"], eog=batch.get("eog"))
             predictions.append(outputs["perclos"].squeeze(-1).detach().cpu())
             targets.append(batch["targets"]["perclos"].float().detach().cpu())
+            if collect_gates:
+                gate_values = _gate_values(outputs)
+                if gate_values.numel():
+                    gates.append(gate_values)
             if max_batches is not None and step + 1 >= max_batches:
                 break
     if not predictions:
         raise RuntimeError("evaluation produced no batches")
+    if collect_gates:
+        return torch.cat(predictions), torch.cat(targets), torch.cat(gates) if gates else torch.empty(0)
     return torch.cat(predictions), torch.cat(targets)
 
 
@@ -165,6 +195,7 @@ def evaluate_pair(
     batch_size=32,
     device="cuda",
     seed=0,
+    seeds=None,
     max_batches=None,
 ):
     device = torch.device(device if device == "cpu" or torch.cuda.is_available() else "cpu")
@@ -172,6 +203,7 @@ def evaluate_pair(
     out_dir.mkdir(parents=True, exist_ok=True)
     all_rows = []
     strata_rows = []
+    seeds = tuple(int(item) for item in (seeds if seeds is not None else (seed,)))
 
     for fold in folds:
         eog_run = Path(run_root) / f"{eog_prefix}{fold}"
@@ -194,43 +226,48 @@ def evaluate_pair(
         eog_model = _load_model(eog_run, eog_metrics, "eog", device)
         fusion_model = _load_model(fusion_run, fusion_metrics, "eeg_eog", device)
 
-        for kind, value in corruptions:
-            scenario = _scenario_name(kind, value)
-            eog_pred, targets = _collect_predictions(
-                eog_model,
-                loader,
-                device,
-                "eog",
-                kind,
-                float(value),
-                seed + fold * 1000,
-                max_batches,
-            )
-            fusion_pred, _ = _collect_predictions(
-                fusion_model,
-                loader,
-                device,
-                "eeg_eog",
-                kind,
-                float(value),
-                seed + fold * 1000,
-                max_batches,
-            )
-            eog_result = _metrics(eog_pred, targets, label_mode)
-            fusion_result = _metrics(fusion_pred, targets, label_mode)
-            all_rows.append(
-                {
+        for corruption_seed in seeds:
+            for kind, value in corruptions:
+                scenario = _scenario_name(kind, value)
+                eog_pred, targets = _collect_predictions(
+                    eog_model,
+                    loader,
+                    device,
+                    "eog",
+                    kind,
+                    float(value),
+                    corruption_seed + fold * 1000,
+                    max_batches,
+                )
+                fusion_pred, _, fusion_gates = _collect_predictions(
+                    fusion_model,
+                    loader,
+                    device,
+                    "eeg_eog",
+                    kind,
+                    float(value),
+                    corruption_seed + fold * 1000,
+                    max_batches,
+                    collect_gates=True,
+                )
+                eog_result = _metrics(eog_pred, targets, label_mode)
+                fusion_result = _metrics(fusion_pred, targets, label_mode)
+                row = {
                     "fold": int(fold),
+                    "seed": int(corruption_seed),
                     "scenario": scenario,
-                    **{f"eog_{key}": value for key, value in eog_result.items()},
-                    **{f"fusion_{key}": value for key, value in fusion_result.items()},
+                    **{f"eog_{key}": metric_value for key, metric_value in eog_result.items()},
+                    **{f"fusion_{key}": metric_value for key, metric_value in fusion_result.items()},
                     "delta_rmse": fusion_result["rmse"] - eog_result["rmse"],
                     "delta_pearson": fusion_result["pearson"] - eog_result["pearson"],
                     "delta_balanced_accuracy": fusion_result["balanced_accuracy"] - eog_result["balanced_accuracy"],
                 }
-            )
-            for row in worst_error_strata(eog_pred, fusion_pred, targets):
-                strata_rows.append({"fold": int(fold), "scenario": scenario, **row})
+                if fusion_gates.numel():
+                    row["fusion_gate_mean"] = float(fusion_gates.mean())
+                    row["fusion_gate_std"] = float(fusion_gates.std(unbiased=False))
+                all_rows.append(row)
+                for row in worst_error_strata(eog_pred, fusion_pred, targets):
+                    strata_rows.append({"fold": int(fold), "seed": int(corruption_seed), "scenario": scenario, **row})
 
     summary = _summarize_rows(all_rows)
     (out_dir / "per_fold.json").write_text(json.dumps(all_rows, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -248,7 +285,7 @@ def _summarize_rows(rows):
     for scenario, items in grouped.items():
         summary[scenario] = {}
         for key in items[0]:
-            if key in ("fold", "scenario"):
+            if key in ("fold", "seed", "scenario"):
                 continue
             values = [float(item[key]) for item in items]
             summary[scenario][key] = {"mean": statistics.mean(values), "std": statistics.pstdev(values)}
@@ -259,7 +296,17 @@ def _write_markdown(path, summary, strata_rows):
     lines = ["# EOG Corruption Analysis", ""]
     for scenario, metrics in summary.items():
         lines.append(f"## {scenario}")
-        for key in ("eog_rmse", "fusion_rmse", "delta_rmse", "eog_pearson", "fusion_pearson", "delta_pearson", "delta_balanced_accuracy"):
+        for key in (
+            "eog_rmse",
+            "fusion_rmse",
+            "delta_rmse",
+            "eog_pearson",
+            "fusion_pearson",
+            "delta_pearson",
+            "delta_balanced_accuracy",
+            "fusion_gate_mean",
+            "fusion_gate_std",
+        ):
             if key in metrics:
                 value = metrics[key]
                 lines.append(f"- {key}: {value['mean']:.4f} +/- {value['std']:.4f}")
@@ -298,6 +345,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--seeds", type=int, nargs="+", default=None)
     parser.add_argument("--max-batches", type=int, default=None)
     args = parser.parse_args()
     evaluate_pair(
@@ -308,10 +356,11 @@ def main():
         fusion_prefix=args.fusion_prefix,
         out_dir=args.out_dir,
         folds=args.folds,
-        corruptions=[_parse_corruption(item) for item in (args.corruption or ["none", "noise:0.5", "mask:0.25", "channel_mask:0.25", "segment_mask:0.25", "zero"])],
+        corruptions=[_parse_corruption(item) for item in args.corruption] if args.corruption else default_corruption_sweep(),
         batch_size=args.batch_size,
         device=args.device,
         seed=args.seed,
+        seeds=args.seeds,
         max_batches=args.max_batches,
     )
 

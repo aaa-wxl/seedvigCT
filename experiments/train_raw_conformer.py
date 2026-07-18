@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from seedvig.metrics import classification_metrics, regression_metrics
-from seedvig.models import RawEEGConformer
+from seedvig.models import CROSS_ATTENTION_DIRECTION_CHOICES, RawEEGConformer
 from seedvig.raw_dataset import LABEL_MODE_CHOICES, RawSeedVIGSequenceDataset, label_mode_num_classes, perclos_to_class
 from seedvig.reference_results import compare_to_references
 
@@ -183,7 +183,9 @@ def run_training(
     use_temporal_delta=False,
     use_eog_gate=False,
     use_eog_anchor_residual=False,
+    use_eog_residual_correction=False,
     eog_dropout=0.0,
+    cross_attention_direction="eeg_queries_eog",
     training_objective="regression",
     regression_weight=0.5,
     selection_metric="auto",
@@ -201,17 +203,19 @@ def run_training(
         raise ValueError(f"selection_metric must be one of: {SELECTION_METRIC_CHOICES}")
     if input_mode not in INPUT_MODE_CHOICES:
         raise ValueError(f"input_mode must be one of: {INPUT_MODE_CHOICES}")
-    if use_eog_anchor_residual:
+    if cross_attention_direction not in CROSS_ATTENTION_DIRECTION_CHOICES:
+        raise ValueError(f"cross_attention_direction must be one of: {CROSS_ATTENTION_DIRECTION_CHOICES}")
+    if use_eog_anchor_residual or use_eog_residual_correction:
         use_eog_cross_attention = False
-    if (use_eog_cross_attention or use_eog_anchor_residual) and input_mode == "eeg":
+    if (use_eog_cross_attention or use_eog_anchor_residual or use_eog_residual_correction) and input_mode == "eeg":
         input_mode = "eeg_eog"
-    if input_mode == "eog" and (use_eog_cross_attention or use_eog_anchor_residual):
+    if input_mode == "eog" and (use_eog_cross_attention or use_eog_anchor_residual or use_eog_residual_correction):
         raise ValueError("EOG-only mode cannot use EEG/EOG fusion")
 
     dataset_args = {
         "root_path": data_root,
         "cache_dir": cache_dir,
-        "include_eog": include_eog or input_mode in ("eog", "eeg_eog") or use_eog_cross_attention or use_eog_anchor_residual,
+        "include_eog": include_eog or input_mode in ("eog", "eeg_eog") or use_eog_cross_attention or use_eog_anchor_residual or use_eog_residual_correction,
         "sequence_length": sequence_length,
         "split_strategy": split_strategy,
         "fold": fold,
@@ -237,7 +241,9 @@ def run_training(
         use_temporal_delta=use_temporal_delta,
         use_eog_gate=use_eog_gate,
         use_eog_anchor_residual=use_eog_anchor_residual,
+        use_eog_residual_correction=use_eog_residual_correction,
         eog_dropout=eog_dropout,
+        cross_attention_direction=cross_attention_direction,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     best_score = None
@@ -286,10 +292,13 @@ def run_training(
             "training_objective": training_objective,
             "regression_weight": regression_weight,
             "selection_metric": selection_metric,
+            "use_eog_cross_attention": use_eog_cross_attention,
             "use_temporal_delta": use_temporal_delta,
             "use_eog_gate": use_eog_gate,
             "use_eog_anchor_residual": use_eog_anchor_residual,
+            "use_eog_residual_correction": use_eog_residual_correction,
             "eog_dropout": eog_dropout,
+            "cross_attention_direction": cross_attention_direction,
         }
         row.update(
             _evaluate(
@@ -384,7 +393,13 @@ def main():
     parser.add_argument("--use-temporal-delta", action="store_true")
     parser.add_argument("--use-eog-gate", action="store_true")
     parser.add_argument("--use-eog-anchor-residual", action="store_true")
+    parser.add_argument("--use-eog-residual-correction", action="store_true")
     parser.add_argument("--eog-dropout", type=float, default=0.0)
+    parser.add_argument(
+        "--cross-attention-direction",
+        choices=CROSS_ATTENTION_DIRECTION_CHOICES,
+        default="eeg_queries_eog",
+    )
     parser.add_argument("--training-objective", choices=TRAINING_OBJECTIVE_CHOICES, default="regression")
     parser.add_argument("--regression-weight", type=float, default=0.5)
     parser.add_argument("--selection-metric", choices=SELECTION_METRIC_CHOICES, default="auto")
@@ -416,7 +431,9 @@ def main():
         use_temporal_delta=args.use_temporal_delta,
         use_eog_gate=args.use_eog_gate,
         use_eog_anchor_residual=args.use_eog_anchor_residual,
+        use_eog_residual_correction=args.use_eog_residual_correction,
         eog_dropout=args.eog_dropout,
+        cross_attention_direction=args.cross_attention_direction,
         training_objective=args.training_objective,
         regression_weight=args.regression_weight,
         selection_metric=args.selection_metric,

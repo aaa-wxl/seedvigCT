@@ -1,0 +1,147 @@
+{
+  "significance": {
+    "final_vs_eog": {
+      "test_rmse": {
+        "ours_mean": 0.14329793471909272,
+        "baseline_mean": 0.14321433926531954,
+        "mean_delta": 8.359545377318866e-05,
+        "paired_t_p": 0.9922110301920244,
+        "wilcoxon_p": 0.625
+      },
+      "test_pearson": {
+        "ours_mean": 0.8508300660550469,
+        "baseline_mean": 0.8536236570752785,
+        "mean_delta": -0.002793591020231645,
+        "paired_t_p": 0.8136085484796092,
+        "wilcoxon_p": 1.0
+      },
+      "test_accuracy": {
+        "ours_mean": 0.8262823529411765,
+        "baseline_mean": 0.8249882352941176,
+        "mean_delta": 0.0012941176470588455,
+        "paired_t_p": 0.9433025256952164,
+        "wilcoxon_p": 1.0
+      },
+      "test_macro_f1": {
+        "ours_mean": 0.8043313207996506,
+        "baseline_mean": 0.7882944822267373,
+        "mean_delta": 0.016036838572913336,
+        "paired_t_p": 0.538241274835346,
+        "wilcoxon_p": 0.625
+      },
+      "test_balanced_accuracy": {
+        "ours_mean": 0.8016837621367782,
+        "baseline_mean": 0.7820108130073106,
+        "mean_delta": 0.019672949129467553,
+        "paired_t_p": 0.434230640819908,
+        "wilcoxon_p": 0.4375
+      }
+    },
+    "final_vs_cross_attention": {
+      "test_rmse": {
+        "ours_mean": 0.14329793471909272,
+        "baseline_mean": 0.1615141476900228,
+        "mean_delta": -0.018216212970930106,
+        "paired_t_p": 0.12925464641422618,
+        "wilcoxon_p": 0.125
+      },
+      "test_pearson": {
+        "ours_mean": 0.8508300660550469,
+        "baseline_mean": 0.8213368288868443,
+        "mean_delta": 0.029493237168202492,
+        "paired_t_p": 0.15872195656635324,
+        "wilcoxon_p": 0.125
+      },
+      "test_accuracy": {
+        "ours_mean": 0.8262823529411765,
+        "baseline_mean": 0.7975529411764706,
+        "mean_delta": 0.02872941176470587,
+        "paired_t_p": 0.24005445259352068,
+        "wilcoxon_p": 0.4375
+      },
+      "test_macro_f1": {
+        "ours_mean": 0.8043313207996506,
+        "baseline_mean": 0.7767638835031833,
+        "mean_delta": 0.0275674372964674,
+        "paired_t_p": 0.294955003894596,
+        "wilcoxon_p": 0.4375
+      },
+      "test_balanced_accuracy": {
+        "ours_mean": 0.8016837621367782,
+        "baseline_mean": 0.7828424544885622,
+        "mean_delta": 0.01884130764821601,
+        "paired_t_p": 0.4351623809957302,
+        "wilcoxon_p": 0.8125
+      }
+    },
+    "final_vs_cross_attention_gate": {
+      "test_rmse": {
+        "ours_mean": 0.14329793471909272,
+        "baseline_mean": 0.14595827689915655,
+        "mean_delta": -0.0026603421800638237,
+        "paired_t_p": 0.32130443673037506,
+        "wilcoxon_p": 0.3125
+      },
+      "test_pearson": {
+        "ours_mean": 0.8508300660550469,
+        "baseline_mean": 0.8472388284459585,
+        "mean_delta": 0.003591237609088349,
+        "paired_t_p": 0.442937761607787,
+        "wilcoxon_p": 0.4375
+      },
+      "test_accuracy": {
+        "ours_mean": 0.8262823529411765,
+        "baseline_mean": 0.8152,
+        "mean_delta": 0.011082352941176477,
+        "paired_t_p": 0.6994875752606602,
+        "wilcoxon_p": 1.0
+      },
+      "test_macro_f1": {
+        "ours_mean": 0.8043313207996506,
+        "baseline_mean": 0.7902711467809981,
+        "mean_delta": 0.01406017401865256,
+        "paired_t_p": 0.6414357035331811,
+        "wilcoxon_p": 0.8125
+      },
+      "test_balanced_accuracy": {
+        "ours_mean": 0.8016837621367782,
+        "baseline_mean": 0.7901803494244857,
+        "mean_delta": 0.011503412712292516,
+        "paired_t_p": 0.646795933307052,
+        "wilcoxon_p": 0.8125
+      }
+    }
+  },
+  "efficiency": [
+    {
+      "model": "EEG-only",
+      "params": 73539,
+      "latency_ms": 0.8492079999996349,
+      "device": "cuda"
+    },
+    {
+      "model": "EOG-only",
+      "params": 73219,
+      "latency_ms": 0.9248759999172762,
+      "device": "cuda"
+    },
+    {
+      "model": "Cross-attention",
+      "params": 93315,
+      "latency_ms": 1.7059659998631105,
+      "device": "cuda"
+    },
+    {
+      "model": "Cross-attention+gate",
+      "params": 101636,
+      "latency_ms": 2.226639000000432,
+      "device": "cuda"
+    },
+    {
+      "model": "Final anchor residual",
+      "params": 84998,
+      "latency_ms": 2.0983519998844713,
+      "device": "cuda"
+    }
+  ]
+}
